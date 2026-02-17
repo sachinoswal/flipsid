@@ -2675,9 +2675,9 @@
                 html += '</div>';
             }
 
-            // Get all unique users (following + followers)
+            // Get all unique users (following + followers), exclude super admins
             const allFriendIds = [...new Set([...following, ...followers])];
-            const allFriends = allFriendIds.map(id => users.find(u => u.id === id)).filter(u => u);
+            const allFriends = allFriendIds.map(id => users.find(u => u.id === id)).filter(u => u && !u.isSuperAdmin);
 
             html += '<div class="section-header">👥 Friends & Followers</div>';
             
@@ -2731,10 +2731,11 @@
                 html += '</div>';
             }
 
-            // Discover section - show ALL other approved users not already in friends list
+            // Discover section - show all approved users except super admins
             const allOtherUsers = users.filter(u => 
                 u.id !== currentUser.id && 
                 u.approved && 
+                !u.isSuperAdmin &&
                 !allFriendIds.includes(u.id)
             );
 
