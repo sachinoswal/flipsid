@@ -1655,47 +1655,6 @@
             }
         }
 
-        // Create admin user
-        if (!users.find(u => u.nickname === 'flipsidadmin')) {
-            users.push({
-                id: 0,
-                fullName: 'FlipSid Admin',
-                nickname: 'flipsidadmin',
-                phone: 'flipsidadmin',
-                password: 'flipsidadmin123',
-                isAdmin: true,
-                isSuperAdmin: true,
-                approved: true,
-                flipcoins: 0,
-                profilePic: null
-            });
-            saveData('flipsidUsers', users);
-        }
-
-        // Initialize approved clubs if empty
-        if (approvedClubs.length === 0) {
-            approvedClubs = [
-                {name: "Manchester City", icon: "💙"},
-                {name: "Liverpool", icon: "❤️"},
-                {name: "Arsenal", icon: "🔴"},
-                {name: "Manchester United", icon: "🔴"},
-                {name: "Chelsea", icon: "💙"},
-                {name: "Tottenham", icon: "⚪"},
-                {name: "Newcastle", icon: "⚫"},
-                {name: "Aston Villa", icon: "🦁"},
-                {name: "Real Madrid", icon: "👑"},
-                {name: "Barcelona", icon: "💙"},
-                {name: "Bayern Munich", icon: "🔴"}
-            ];
-            saveData('flipsidApprovedClubs', approvedClubs);
-        }
-
-        // Initialize approved types if empty
-        if (approvedTypes.length === 0) {
-            approvedTypes = ["Base", "Rookie", "Legend", "Icon", "Autograph", "Limited Edition", "Goal Machine", "Playmaker", "Rising Star"];
-            saveData('flipsidApprovedTypes', approvedTypes);
-        }
-
         // Top 100 Football Players - Topps Match Attax & Premier League only
         window.onload = async function() {
             await loadFromFirebase();
