@@ -1103,6 +1103,47 @@
             border: 2px solid #ffd93d;
             margin-top: 15px;
         }
+
+        .admin-user-row {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 15px;
+            background: white;
+            border-radius: 10px;
+            border: 2px solid #eee;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+
+        .admin-card-row {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 15px;
+            background: white;
+            border-radius: 10px;
+            border: 2px solid #eee;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+
+        .admin-user-info {
+            flex: 1;
+            min-width: 200px;
+        }
+
+        .admin-user-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .pending-highlight {
+            border-color: #FF9800 !important;
+            background: #fff8f0 !important;
+        }
     </style>
 </head>
 <body>
@@ -1379,28 +1420,36 @@
             </div>
 
             <div class="admin-nav">
-                <div class="admin-tab active" onclick="switchAdminTab('pendingUsers')">👤 Pending Users</div>
-                <div class="admin-tab" onclick="switchAdminTab('pendingCards')">🎴 Pending Cards</div>
+                <div class="admin-tab active" onclick="switchAdminTab('users')">👥 Users</div>
+                <div class="admin-tab" onclick="switchAdminTab('cards')">🎴 Cards</div>
                 <div class="admin-tab" onclick="switchAdminTab('manageClubs')">⚽ Clubs</div>
                 <div class="admin-tab" onclick="switchAdminTab('manageTypes')">🏷️ Card Types</div>
-                <div class="admin-tab" onclick="switchAdminTab('resetPassword')">🔑 Reset Password</div>
                 <div class="admin-tab" id="superAdminTab" style="display:none;" onclick="switchAdminTab('superAdmin')">👑 Super Admin</div>
             </div>
 
-            <div id="adminTab-pendingUsers" class="admin-tab-content active">
+            <!-- Users Tab -->
+            <div id="adminTab-users" class="admin-tab-content active">
                 <div class="admin-panel" style="margin:0;">
-                    <h3>🔐 Pending User Approvals</h3>
-                    <div id="pendingUsersList" class="pending-users"></div>
+                    <h3>👥 All Users</h3>
+                    <input type="text" id="userSearchInput" placeholder="🔍 Search by nickname or name..." 
+                        oninput="renderAdminUsers()"
+                        style="width:100%; padding:12px; border:2px solid #ffd93d; border-radius:8px; font-size:1em; margin-bottom:20px;">
+                    <div id="adminUsersList"></div>
                 </div>
             </div>
 
-            <div id="adminTab-pendingCards" class="admin-tab-content">
+            <!-- Cards Tab -->
+            <div id="adminTab-cards" class="admin-tab-content">
                 <div class="admin-panel" style="margin:0;">
-                    <h3>🎴 Pending Card Approvals</h3>
-                    <div id="pendingCardsList" class="pending-cards-list"></div>
+                    <h3>🎴 All Cards</h3>
+                    <input type="text" id="cardSearchInput" placeholder="🔍 Search by player name or team..."
+                        oninput="renderAdminCards()"
+                        style="width:100%; padding:12px; border:2px solid #ffd93d; border-radius:8px; font-size:1em; margin-bottom:20px;">
+                    <div id="adminCardsList"></div>
                 </div>
             </div>
 
+            <!-- Manage Clubs -->
             <div id="adminTab-manageClubs" class="admin-tab-content">
                 <div class="admin-panel" style="margin:0;">
                     <h3>⚽ Manage Approved Clubs</h3>
@@ -1413,6 +1462,7 @@
                 </div>
             </div>
 
+            <!-- Manage Card Types -->
             <div id="adminTab-manageTypes" class="admin-tab-content">
                 <div class="admin-panel" style="margin:0;">
                     <h3>🏷️ Manage Approved Card Types</h3>
@@ -1424,18 +1474,7 @@
                 </div>
             </div>
 
-            <div id="adminTab-resetPassword" class="admin-tab-content">
-                <div class="admin-panel" style="margin:0;">
-                    <h3>🔑 Reset User Password</h3>
-                    <p style="color:#666; margin-bottom:20px;">Search for a user and set a new temporary password. Tell the user what it is so they can log in.</p>
-                    <div style="display:flex; gap:10px; margin-bottom:20px; flex-wrap:wrap;">
-                        <input type="text" id="resetSearchNickname" placeholder="Enter nickname..." style="flex:1; min-width:150px; padding:10px; border:2px solid #ffd93d; border-radius:8px;">
-                        <button class="btn-small" onclick="searchUserForReset()" style="width:auto; flex:none;">Search</button>
-                    </div>
-                    <div id="resetUserResult"></div>
-                </div>
-            </div>
-
+            <!-- Super Admin -->
             <div id="adminTab-superAdmin" class="admin-tab-content">
                 <div class="admin-panel" style="margin:0; border-color:#9C27B0;">
                     <h3 style="color:#9C27B0;">👑 Super Admin - Manage Admins</h3>
@@ -1747,20 +1786,18 @@
         function showAdminPage() {
             document.getElementById('dashboard').classList.add('hidden');
             document.getElementById('adminPage').classList.remove('hidden');
-
-            // Show super admin tab if applicable
             if (currentUser.isSuperAdmin) {
                 document.getElementById('superAdminTab').style.display = 'block';
                 loadAdminsList();
             }
-
-            loadPendingUsers();
-            loadPendingCards();
             loadClubsList();
             loadTypesList();
-
-            // Reset to first tab
-            switchAdminTab('pendingUsers');
+            renderAdminUsers();
+            // Activate users tab
+            document.querySelectorAll('.admin-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.admin-tab-content').forEach(c => c.classList.remove('active'));
+            document.querySelector('.admin-tab').classList.add('active');
+            document.getElementById('adminTab-users').classList.add('active');
         }
 
         function goBackToDashboard() {
@@ -1769,73 +1806,192 @@
         }
 
         function switchAdminTab(tabName) {
-            // Update tab buttons
             document.querySelectorAll('.admin-tab').forEach(t => t.classList.remove('active'));
             event.target.classList.add('active');
-
-            // Update tab content
             document.querySelectorAll('.admin-tab-content').forEach(c => c.classList.remove('active'));
             document.getElementById(`adminTab-${tabName}`).classList.add('active');
+            if (tabName === 'users') renderAdminUsers();
+            if (tabName === 'cards') renderAdminCards();
         }
 
-        // Password reset
-        function searchUserForReset() {
-            const nickname = document.getElementById('resetSearchNickname').value.trim();
-            const resultDiv = document.getElementById('resetUserResult');
-
-            if (!nickname) {
-                resultDiv.innerHTML = '<p style="color:#ff4444;">Please enter a nickname</p>';
+        // ── ADMIN USERS TAB ──────────────────────────────────────────
+        function renderAdminUsers() {
+            const search = (document.getElementById('userSearchInput')?.value || '').toLowerCase();
+            const container = document.getElementById('adminUsersList');
+            const filtered = users
+                .filter(u => !u.isSuperAdmin)
+                .filter(u => !search || u.nickname.toLowerCase().includes(search) || u.fullName.toLowerCase().includes(search))
+                .sort((a, b) => {
+                    if (!a.approved && b.approved) return -1;
+                    if (a.approved && !b.approved) return 1;
+                    return a.nickname.localeCompare(b.nickname);
+                });
+            if (filtered.length === 0) {
+                container.innerHTML = '<p style="color:#999; text-align:center; padding:20px;">No users found</p>';
                 return;
             }
-
-            const user = users.find(u => u.nickname.toLowerCase() === nickname.toLowerCase() && !u.isSuperAdmin);
-            
-            if (!user) {
-                resultDiv.innerHTML = '<p style="color:#ff4444;">User not found</p>';
-                return;
-            }
-
-            resultDiv.innerHTML = `
-                <div class="password-reset-form">
-                    <div style="display:flex; align-items:center; gap:10px; margin-bottom:15px;">
-                        ${user.profilePic ? `<img src="${user.profilePic}" style="width:40px; height:40px; border-radius:50%; object-fit:cover;">` : `<div class="user-avatar" style="width:40px; height:40px;">${user.nickname.charAt(0).toUpperCase()}</div>`}
-                        <div>
-                            <strong>${user.nickname}</strong>
-                            <div style="color:#999; font-size:0.9em;">${user.fullName}</div>
+            container.innerHTML = filtered.map(user => {
+                const isPending = !user.approved;
+                return `
+                <div class="admin-user-row ${isPending ? 'pending-highlight' : ''}">
+                    <div class="admin-user-info">
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            ${user.profilePic ? `<img src="${user.profilePic}" style="width:45px;height:45px;border-radius:50%;object-fit:cover;border:2px solid #ffd93d;">` : `<div class="user-avatar" style="width:45px;height:45px;font-size:1.2em;">${user.nickname.charAt(0).toUpperCase()}</div>`}
+                            <div>
+                                <div style="font-weight:bold;font-size:1.05em;">
+                                    ${user.nickname}
+                                    ${isPending ? '<span style="background:#FF9800;color:white;padding:2px 8px;border-radius:10px;font-size:0.75em;margin-left:6px;">⏳ Pending</span>' : ''}
+                                    ${user.isAdmin ? '<span style="background:#ff4444;color:white;padding:2px 8px;border-radius:10px;font-size:0.75em;margin-left:6px;">ADMIN</span>' : ''}
+                                </div>
+                                <div style="color:#999;font-size:0.85em;margin-top:2px;">${user.fullName} · 💰 ${user.flipcoins || 0} FlipCoins</div>
+                            </div>
                         </div>
                     </div>
-                    <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                        <input type="text" id="newPasswordInput" placeholder="Enter new temporary password" 
-                            style="flex:1; min-width:200px; padding:10px; border:2px solid #ffd93d; border-radius:8px;">
-                        <button class="btn-approve" onclick="resetUserPassword(${user.id})">Set Password</button>
+                    <div class="admin-user-actions">
+                        ${isPending ? `<button class="btn-approve" onclick="approveUserAndRefresh(${user.id})">✓ Approve</button>` : ''}
+                        ${isPending ? `<button class="btn-reject" onclick="rejectUserAndRefresh(${user.id})">✗ Reject</button>` : ''}
+                        ${!isPending ? `<button class="btn-edit" onclick="openEditUserModal(${user.id})">✏️ Edit</button>` : ''}
+                        ${!isPending ? `<button class="btn-small" onclick="openResetPasswordModal(${user.id})" style="background:#9C27B0;color:white;">🔑 Reset</button>` : ''}
+                        ${!isPending && !user.isAdmin && currentUser.isSuperAdmin ? `<button class="btn-small" onclick="makeAdmin(${user.id})" style="background:#ff4444;color:white;">⭐ Make Admin</button>` : ''}
+                        ${!isPending && user.isAdmin && !user.isSuperAdmin && currentUser.isSuperAdmin ? `<button class="btn-small btn-secondary" onclick="removeAdminAndRefresh(${user.id})">Remove Admin</button>` : ''}
                     </div>
-                    <p style="color:#999; font-size:0.85em; margin-top:10px;">⚠️ Tell the user their new password so they can log in and change it.</p>
-                </div>
-            `;
+                </div>`;
+            }).join('');
         }
 
-        function resetUserPassword(userId) {
-            const newPassword = document.getElementById('newPasswordInput').value.trim();
-            if (!newPassword || newPassword.length < 4) {
-                alert('Password must be at least 4 characters!');
-                return;
-            }
-
+        function approveUserAndRefresh(userId) {
             const user = users.find(u => u.id === userId);
             if (!user) return;
+            user.approved = true;
+            saveData('flipsidUsers', users);
+            renderAdminUsers();
+        }
 
+        function rejectUserAndRefresh(userId) {
+            if (!confirm('Reject and delete this user?')) return;
+            users = users.filter(u => u.id !== userId);
+            saveData('flipsidUsers', users);
+            renderAdminUsers();
+        }
+
+        function makeAdmin(userId) {
+            if (!confirm('Make this user an admin?')) return;
+            const user = users.find(u => u.id === userId);
+            if (!user) return;
+            user.isAdmin = true;
+            saveData('flipsidUsers', users);
+            renderAdminUsers();
+        }
+
+        function removeAdminAndRefresh(userId) {
+            if (!confirm('Remove admin privileges?')) return;
+            const user = users.find(u => u.id === userId);
+            if (!user) return;
+            user.isAdmin = false;
+            saveData('flipsidUsers', users);
+            renderAdminUsers();
+            loadAdminsList();
+        }
+
+        function openEditUserModal(userId) {
+            const user = users.find(u => u.id === userId);
+            if (!user) return;
+            document.getElementById('editUserModalNickname').value = user.nickname;
+            document.getElementById('editUserModalFullName').value = user.fullName;
+            document.getElementById('editUserModalId').value = userId;
+            document.getElementById('editUserModal').classList.add('active');
+        }
+
+        function saveEditedUser() {
+            const userId = parseInt(document.getElementById('editUserModalId').value);
+            const user = users.find(u => u.id === userId);
+            if (!user) return;
+            const newNickname = document.getElementById('editUserModalNickname').value.trim();
+            const newFullName = document.getElementById('editUserModalFullName').value.trim();
+            if (!newNickname) { alert('Nickname cannot be empty'); return; }
+            if (users.find(u => u.nickname === newNickname && u.id !== userId)) { alert('Nickname already taken!'); return; }
+            user.nickname = newNickname;
+            user.fullName = newFullName;
+            saveData('flipsidUsers', users);
+            document.getElementById('editUserModal').classList.remove('active');
+            renderAdminUsers();
+        }
+
+        function openResetPasswordModal(userId) {
+            const user = users.find(u => u.id === userId);
+            if (!user) return;
+            document.getElementById('resetPasswordUserId').value = userId;
+            document.getElementById('resetPasswordUsername').textContent = user.nickname;
+            document.getElementById('resetPasswordInput').value = '';
+            document.getElementById('resetPasswordResult').innerHTML = '';
+            document.getElementById('resetPasswordModal').classList.add('active');
+        }
+
+        function saveResetPassword() {
+            const userId = parseInt(document.getElementById('resetPasswordUserId').value);
+            const newPassword = document.getElementById('resetPasswordInput').value.trim();
+            if (!newPassword || newPassword.length < 4) { alert('Password must be at least 4 characters'); return; }
+            const user = users.find(u => u.id === userId);
+            if (!user) return;
             user.password = newPassword;
             saveData('flipsidUsers', users);
+            document.getElementById('resetPasswordResult').innerHTML = `
+                <div style="background:#e8f5e9;padding:12px;border-radius:8px;border:2px solid #4CAF50;margin-top:10px;text-align:center;">
+                    ✅ Password reset! Tell <strong>${user.nickname}</strong> their new password is: 
+                    <strong style="color:#ff4444;font-size:1.1em;">${newPassword}</strong>
+                </div>`;
+        }
 
-            document.getElementById('resetUserResult').innerHTML = `
-                <div style="background:#e8f5e9; padding:20px; border-radius:10px; border:2px solid #4CAF50; text-align:center;">
-                    <div style="font-size:2em; margin-bottom:10px;">✅</div>
-                    <strong>${user.nickname}'s password has been reset!</strong>
-                    <p style="margin-top:10px; color:#666;">New password: <strong style="color:#ff4444; font-size:1.1em;">${newPassword}</strong></p>
-                    <p style="color:#999; font-size:0.85em; margin-top:10px;">Tell them this password so they can log back in.</p>
+        // ── ADMIN CARDS TAB ──────────────────────────────────────────
+        function renderAdminCards() {
+            const search = (document.getElementById('cardSearchInput')?.value || '').toLowerCase();
+            const container = document.getElementById('adminCardsList');
+            const allCards = [
+                ...pendingCards.map(c => ({...c, _isPending: true})),
+                ...cards.filter(c => c.approved)
+            ].filter(c => !search || c.playerName.toLowerCase().includes(search) || c.team.toLowerCase().includes(search));
+
+            if (allCards.length === 0) {
+                container.innerHTML = '<p style="color:#999;text-align:center;padding:20px;">No cards found</p>';
+                return;
+            }
+            container.innerHTML = allCards.map(card => `
+                <div class="admin-card-row ${card._isPending ? 'pending-highlight' : ''}">
+                    <div style="display:flex;gap:8px;flex-shrink:0;">
+                        <div class="card-image" style="width:65px;height:90px;font-size:0.6em;" onclick="openModal('${card.frontImage || ''}')">
+                            ${card.frontImage ? `<img src="${card.frontImage}" alt="Front">` : 'FRONT'}
+                        </div>
+                        <div class="card-image" style="width:65px;height:90px;font-size:0.6em;" onclick="openModal('${card.backImage || ''}')">
+                            ${card.backImage ? `<img src="${card.backImage}" alt="Back">` : 'BACK'}
+                        </div>
+                    </div>
+                    <div style="flex:1;min-width:0;">
+                        <div style="font-weight:bold;font-size:1.05em;">
+                            ${card.playerName}
+                            ${card._isPending ? '<span style="background:#FF9800;color:white;padding:2px 8px;border-radius:10px;font-size:0.75em;margin-left:6px;">⏳ Pending</span>' : ''}
+                        </div>
+                        <div style="color:#999;font-size:0.85em;margin-top:3px;">${card.team} ${card.clubIcon || ''} · ${card.cardType} · ${card.company}</div>
+                        <div style="color:#bbb;font-size:0.8em;">⬆️ ${card.uploaderNickname || 'flipsid'} · #${card.id}</div>
+                        ${card.tags && card.tags.length > 0 ? `<div class="tags" style="margin-top:4px;">${card.tags.map(t => `<span class="tag">${t}</span>`).join('')}</div>` : ''}
+                    </div>
+                    <div class="admin-user-actions">
+                        ${card._isPending ? `<button class="btn-approve" onclick="approveCard(${card.id}); renderAdminCards();">✓ Approve</button>` : ''}
+                        ${card._isPending ? `<button class="btn-reject" onclick="rejectCard(${card.id}); renderAdminCards();">✗ Reject</button>` : ''}
+                        <button class="btn-edit" onclick="${card._isPending ? `openEditModal(${card.id})` : `editApprovedCard(${card.id})`}">✏️ Edit</button>
+                        ${!card._isPending ? `<button class="btn-reject" onclick="deleteCard(${card.id})">🗑️ Delete</button>` : ''}
+                    </div>
                 </div>
-            `;
-            document.getElementById('resetSearchNickname').value = '';
+            `).join('');
+        }
+
+        function deleteCard(cardId) {
+            if (!confirm('Permanently delete this card?')) return;
+            cards = cards.filter(c => c.id !== cardId);
+            delete cardInteractions[cardId];
+            saveData('flipsidCards', cards);
+            saveData('flipsidCardInteractions', cardInteractions);
+            renderAdminCards();
+            loadBrowseCards();
         }
 
         function login(e) {
@@ -2392,44 +2548,6 @@
             closeEditModal();
         }
 
-        function approveCard(cardId) {
-            const cardIndex = pendingCards.findIndex(c => c.id === cardId);
-            if (cardIndex === -1) return;
-
-            const card = pendingCards[cardIndex];
-            card.approved = true;
-
-            // Initialize interactions based on user's checkboxes
-            cardInteractions[card.id] = {
-                likes: card.userInteractions.like ? [card.uploadedBy] : [],
-                owns: card.userInteractions.own ? [card.uploadedBy] : [],
-                wants: card.userInteractions.want ? [card.uploadedBy] : []
-            };
-
-            cards.push(card);
-            pendingCards.splice(cardIndex, 1);
-
-            // Award FlipCoin to uploader
-            const uploader = users.find(u => u.id === card.uploadedBy);
-            if (uploader) {
-                uploader.flipcoins = (uploader.flipcoins || 0) + 1;
-                if (currentUser.id === uploader.id) {
-                    currentUser.flipcoins = uploader.flipcoins;
-                    document.getElementById('flipcoinsAmount').textContent = currentUser.flipcoins;
-                }
-            }
-
-            saveData('flipsidUsers', users);
-            saveData('flipsidCards', cards);
-            saveData('flipsidCardInteractions', cardInteractions);
-            saveData('flipsidPendingCards', pendingCards);
-            localStorage.setItem('flipsidCurrentUser', JSON.stringify(currentUser));
-
-            loadPendingCards();
-            loadBrowseCards();
-            alert(`Card approved! ${uploader.nickname} earned 1 FlipCoin! 🎉`);
-        }
-
         function rejectCard(cardId) {
             if (confirm('Are you sure you want to reject this card?')) {
                 pendingCards = pendingCards.filter(c => c.id !== cardId);
@@ -2599,7 +2717,8 @@
             
             const following = follows[currentUser.id] || [];
             const followers = Object.keys(follows).filter(userId => 
-                follows[userId].includes(currentUser.id) && parseInt(userId) !== currentUser.id
+                follows[userId].map(id => String(id)).includes(String(currentUser.id)) && 
+                String(userId) !== String(currentUser.id)
             ).map(id => parseInt(id));
 
             // Get pending follow requests TO me
@@ -2690,12 +2809,12 @@
                 html += '</div>';
             }
 
-            // Discover section - show all approved users except super admins
+            // Discover section - show all approved users except super admins and self
             const allOtherUsers = users.filter(u => 
-                u.id !== currentUser.id && 
+                String(u.id) !== String(currentUser.id) && 
                 u.approved && 
                 !u.isSuperAdmin &&
-                !allFriendIds.includes(u.id)
+                !allFriendIds.map(id => String(id)).includes(String(u.id))
             );
 
             if (allOtherUsers.length > 0) {
@@ -3240,7 +3359,7 @@
         }
 
         // Update approveCard to add new clubs/types to approved lists
-        function approveCard(cardId) {
+        async function approveCard(cardId) {
             const cardIndex = pendingCards.findIndex(c => c.id === cardId);
             if (cardIndex === -1) return;
 
@@ -3250,19 +3369,17 @@
             // Add new club to approved list if not present
             if (!approvedClubs.find(c => c.name === card.team)) {
                 approvedClubs.push({name: card.team, icon: card.clubIcon || '⚽'});
-                saveData('flipsidApprovedClubs', approvedClubs);
             }
 
             // Add new type to approved list if not present
             if (!approvedTypes.includes(card.cardType)) {
                 approvedTypes.push(card.cardType);
-                saveData('flipsidApprovedTypes', approvedTypes);
             }
 
             cardInteractions[card.id] = {
-                likes: card.userInteractions.like ? [card.uploadedBy] : [],
-                owns: card.userInteractions.own ? [card.uploadedBy] : [],
-                wants: card.userInteractions.want ? [card.uploadedBy] : []
+                likes: card.userInteractions?.like ? [card.uploadedBy] : [],
+                owns: card.userInteractions?.own ? [card.uploadedBy] : [],
+                wants: card.userInteractions?.want ? [card.uploadedBy] : []
             };
 
             cards.push(card);
@@ -3271,25 +3388,30 @@
             const uploader = users.find(u => u.id === card.uploadedBy);
             if (uploader) {
                 uploader.flipcoins = (uploader.flipcoins || 0) + 1;
-                if (currentUser.id === uploader.id) {
+                if (String(currentUser.id) === String(uploader.id)) {
                     currentUser.flipcoins = uploader.flipcoins;
                     document.getElementById('headerFlipcoins').textContent = currentUser.flipcoins;
+                    localStorage.setItem('flipsidCurrentUser', JSON.stringify(currentUser));
                 }
             }
 
-            saveData('flipsidUsers', users);
-            saveData('flipsidCards', cards);
-            saveData('flipsidCardInteractions', cardInteractions);
-            saveData('flipsidPendingCards', pendingCards);
-            localStorage.setItem('flipsidCurrentUser', JSON.stringify(currentUser));
+            // Wait for all Firebase writes to complete before refreshing UI
+            await Promise.all([
+                saveData('flipsidUsers', users),
+                saveData('flipsidCards', cards),
+                saveData('flipsidCardInteractions', cardInteractions),
+                saveData('flipsidPendingCards', pendingCards),
+                saveData('flipsidApprovedClubs', approvedClubs),
+                saveData('flipsidApprovedTypes', approvedTypes)
+            ]);
 
-            loadPendingCards();
             loadBrowseCards();
             loadClubsList();
             loadTypesList();
             populateClubsDropdown();
             populateTypesDropdown();
-            alert(`Card approved! ${uploader.nickname} earned 1 FlipCoin! 🎉`);
+            renderAdminCards();
+            alert(`Card approved! ${uploader ? uploader.nickname : 'User'} earned 1 FlipCoin! 🎉`);
         }
 
         let currentViewingUserId = null;
@@ -3456,6 +3578,44 @@
             `;
         }
     </script>
+
+    <!-- Edit User Modal -->
+    <div id="editUserModal" class="modal">
+        <div class="edit-modal-content" onclick="event.stopPropagation()">
+            <h2 style="color:#ffaf00; margin-bottom:20px;">✏️ Edit User</h2>
+            <input type="hidden" id="editUserModalId">
+            <div class="form-group">
+                <label>Nickname</label>
+                <input type="text" id="editUserModalNickname">
+            </div>
+            <div class="form-group">
+                <label>Full Name</label>
+                <input type="text" id="editUserModalFullName">
+            </div>
+            <div style="display:flex; gap:10px; margin-top:20px;">
+                <button class="btn" onclick="saveEditedUser()">Save Changes</button>
+                <button class="btn btn-secondary" onclick="document.getElementById('editUserModal').classList.remove('active')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Reset Password Modal -->
+    <div id="resetPasswordModal" class="modal">
+        <div class="edit-modal-content" onclick="event.stopPropagation()">
+            <h2 style="color:#9C27B0; margin-bottom:20px;">🔑 Reset Password</h2>
+            <input type="hidden" id="resetPasswordUserId">
+            <p style="color:#666; margin-bottom:15px;">Set a new temporary password for <strong id="resetPasswordUsername"></strong></p>
+            <div class="form-group">
+                <label>New Password</label>
+                <input type="text" id="resetPasswordInput" placeholder="Min 4 characters">
+            </div>
+            <div id="resetPasswordResult"></div>
+            <div style="display:flex; gap:10px; margin-top:20px;">
+                <button class="btn" style="background:linear-gradient(135deg,#9C27B0,#7B1FA2);" onclick="saveResetPassword()">Set Password</button>
+                <button class="btn btn-secondary" onclick="document.getElementById('resetPasswordModal').classList.remove('active')">Close</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Firebase Status Indicator -->
     <div id="firebaseStatus" style="
