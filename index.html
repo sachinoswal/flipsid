@@ -1584,9 +1584,11 @@
         try {
             firebase.initializeApp(firebaseConfig);
             db = firebase.firestore();
-            useFirebase = firebaseConfig.apiKey !== "YOUR_API_KEY";
+            useFirebase = true;
+            console.log('✅ Firebase initialized successfully');
         } catch(e) {
-            console.log('Firebase not configured, using localStorage');
+            console.log('❌ Firebase init error:', e);
+            useFirebase = false;
         }
 
         // ============================================================
@@ -1614,8 +1616,14 @@
         }
 
         async function loadFromFirebase() {
-            if (!useFirebase) return;
+            const statusEl = document.getElementById('firebaseStatus');
+            if (!useFirebase) {
+                console.log('⚠️ Firebase disabled, using localStorage');
+                if (statusEl) statusEl.innerHTML = '⚠️ Offline mode (localStorage)';
+                return;
+            }
             try {
+                if (statusEl) statusEl.innerHTML = '🔄 Connecting to Firebase...';
                 const collections = ['flipsidUsers','flipsidCards','flipsidCardInteractions',
                     'flipsidPendingCards','flipsidFollows','flipsidFollowRequests',
                     'flipsidApprovedClubs','flipsidApprovedTypes'];
@@ -1625,7 +1633,6 @@
                     if (doc.exists) {
                         const parsed = JSON.parse(doc.data().data);
                         localStorage.setItem(key, JSON.stringify(parsed));
-                        // Update in-memory variables
                         if (key === 'flipsidUsers') users = parsed;
                         if (key === 'flipsidCards') cards = parsed;
                         if (key === 'flipsidCardInteractions') cardInteractions = parsed;
@@ -1634,10 +1641,18 @@
                         if (key === 'flipsidFollowRequests') followRequests = parsed;
                         if (key === 'flipsidApprovedClubs') approvedClubs = parsed;
                         if (key === 'flipsidApprovedTypes') approvedTypes = parsed;
+                        console.log(`✅ Loaded ${key} from Firebase`);
+                    } else {
+                        console.log(`ℹ️ ${key} not in Firebase yet, using localStorage`);
                     }
                 }
-                console.log('✅ Loaded data from Firebase');
-            } catch(e) { console.log('Firebase read error:', e); }
+                if (statusEl) statusEl.innerHTML = '🔥 Firebase connected';
+                setTimeout(() => { if (statusEl) statusEl.style.display = 'none'; }, 3000);
+                console.log('✅ Firebase load complete');
+            } catch(e) {
+                console.log('❌ Firebase read error:', e);
+                if (statusEl) statusEl.innerHTML = '❌ Firebase error: ' + e.message;
+            }
         }
 
         // Create admin user
@@ -3473,5 +3488,21 @@
             `;
         }
     </script>
+
+    <!-- Firebase Status Indicator -->
+    <div id="firebaseStatus" style="
+        position: fixed;
+        bottom: 15px;
+        right: 15px;
+        background: rgba(0,0,0,0.75);
+        color: white;
+        padding: 8px 14px;
+        border-radius: 20px;
+        font-size: 0.85em;
+        font-weight: bold;
+        z-index: 9999;
+        display: block;
+    ">🔄 Loading...</div>
+
 </body>
 </html>
