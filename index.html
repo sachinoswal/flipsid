@@ -2731,11 +2731,10 @@
                 html += '</div>';
             }
 
-            // Discover section
+            // Discover section - show ALL other approved users not already in friends list
             const allOtherUsers = users.filter(u => 
                 u.id !== currentUser.id && 
                 u.approved && 
-                !u.isAdmin &&
                 !allFriendIds.includes(u.id)
             );
 
@@ -2752,6 +2751,7 @@
                                     ${user.profilePic ? `<img src="${user.profilePic}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover;">` : `<div class="user-avatar" style="width: 40px; height: 40px;">${user.nickname.charAt(0).toUpperCase()}</div>`}
                                     <div>
                                         <strong>${user.nickname}</strong>
+                                        ${user.isAdmin ? '<span style="background:#ff4444; color:white; padding:2px 6px; border-radius:4px; font-size:0.7em; margin-left:5px;">ADMIN</span>' : ''}
                                         ${hasSentRequest ? '<div style="color: #FF9800; font-size: 0.75em; margin-top: 3px;">Request Sent</div>' : ''}
                                     </div>
                                 </div>
@@ -2772,6 +2772,14 @@
                     `;
                 });
                 html += '</div>';
+            } else if (allFriends.length === 0) {
+                html += `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">👥</div>
+                        <h3>No other users yet</h3>
+                        <p>You're the first one here! Share FlipSid with your friends so they can sign up.</p>
+                    </div>
+                `;
             }
 
             container.innerHTML = html;
