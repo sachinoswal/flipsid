@@ -1277,7 +1277,7 @@
                 <div class="filter-section">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
                         <h3 style="color:#ffaf00; margin:0;">🔍 Filter Cards</h3>
-                        <button class="btn-small" onclick="clearFilters()" style="width:auto; padding:8px 16px; font-size:0.9em;">Clear Filters</button>
+                        <button class="btn-small" onclick="clearFilters()" style="flex:none !important; min-width:auto !important; width:auto; padding:8px 16px; font-size:0.9em;">Clear Filters</button>
                     </div>
                     <div class="filter-row">
                         <input type="text" class="filter-input" id="searchText" placeholder="Search player name..." onkeyup="applyFilters()">
@@ -1959,6 +1959,7 @@
 
             populateClubsDropdown();
             populateTypesDropdown();
+            updateFilterOptions();
             loadBrowseCards();
             updateFollowRequestBadge();
         }
@@ -2054,7 +2055,7 @@
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
             event.target.classList.add('active');
             document.getElementById(tab + 'Tab').classList.add('active');
-            if (tab === 'browse')    loadBrowseCards();
+            if (tab === 'browse')    { updateFilterOptions(); loadBrowseCards(); }
             if (tab === 'yourCards') loadYourCards();
             if (tab === 'friends')   loadFriends();
         }
@@ -2094,10 +2095,20 @@
         async function uploadCard(e) {
             e.preventDefault();
             const playerName = document.getElementById('uploadPlayerName').value.trim();
-            const team       = document.getElementById('uploadPlayerTeam').value.trim();
+            
+            // Check if custom team or selected team
+            const teamSelect = document.getElementById('uploadPlayerTeam').value;
+            const teamCustom = document.getElementById('uploadPlayerTeamCustom').value.trim();
+            const team = teamSelect === '__custom__' ? teamCustom : teamSelect;
+            
             const clubIconEl = document.getElementById('clubIconDisplay');
             const clubIcon   = clubIconEl ? (clubIconEl.dataset.icon || '') : '';
-            const cardType   = document.getElementById('uploadCardType').value.trim();
+            
+            // Check if custom type or selected type
+            const typeSelect = document.getElementById('uploadCardType').value;
+            const typeCustom = document.getElementById('uploadCardTypeCustom').value.trim();
+            const cardType = typeSelect === '__custom__' ? typeCustom : typeSelect;
+            
             const company    = document.getElementById('uploadCardCompany').value.trim();
             const tagsInput  = document.getElementById('uploadTags').value.trim();
             const tags       = tagsInput ? tagsInput.split(',').map(t => t.trim()).filter(Boolean) : [];
@@ -2176,10 +2187,10 @@
         }
 
         function applyFilters() {
-            const search   = document.getElementById('searchInput').value.toLowerCase();
-            const clubF    = document.getElementById('filterClub').value;
-            const typeF    = document.getElementById('filterType').value;
-            const actionF  = document.getElementById('filterAction')?.value || 'all';
+            const search   = document.getElementById('searchText')?.value.toLowerCase() || '';
+            const clubF    = document.getElementById('filterTeam')?.value || '';
+            const typeF    = document.getElementById('filterType')?.value || '';
+            const companyF = document.getElementById('filterCompany')?.value || '';
 
             let filtered = cards.filter(c => c.approved !== false);
 
@@ -2189,23 +2200,7 @@
                 c.company.toLowerCase().includes(search));
             if (clubF) filtered = filtered.filter(c => c.team === clubF);
             if (typeF) filtered = filtered.filter(c => c.cardType === typeF);
-
-            if (actionF === 'loved') {
-                filtered = filtered.filter(c => {
-                    const i = cardInteractions[String(c.id)] || cardInteractions[c.id];
-                    return i && i.likes && i.likes.map(String).includes(String(currentUser.id));
-                });
-            } else if (actionF === 'owned') {
-                filtered = filtered.filter(c => {
-                    const i = cardInteractions[String(c.id)] || cardInteractions[c.id];
-                    return i && i.owns && i.owns.map(String).includes(String(currentUser.id));
-                });
-            } else if (actionF === 'wanted') {
-                filtered = filtered.filter(c => {
-                    const i = cardInteractions[String(c.id)] || cardInteractions[c.id];
-                    return i && i.wants && i.wants.map(String).includes(String(currentUser.id));
-                });
-            }
+            if (companyF) filtered = filtered.filter(c => c.company === companyF);
 
             const container = document.getElementById('browseContent');
             if (filtered.length === 0) {
@@ -2216,10 +2211,10 @@
         }
 
         function clearFilters() {
-            document.getElementById('searchInput').value = '';
-            document.getElementById('filterClub').value = '';
-            document.getElementById('filterType').value = '';
-            if (document.getElementById('filterAction')) document.getElementById('filterAction').value = 'all';
+            if (document.getElementById('searchText')) document.getElementById('searchText').value = '';
+            if (document.getElementById('filterTeam')) document.getElementById('filterTeam').value = '';
+            if (document.getElementById('filterType')) document.getElementById('filterType').value = '';
+            if (document.getElementById('filterCompany')) document.getElementById('filterCompany').value = '';
             loadBrowseCards();
         }
 
@@ -2601,10 +2596,10 @@
                         ${card.tags && card.tags.length > 0 ? `<div class="tags" style="margin-top:4px;">${card.tags.map(t => `<span class="tag">${t}</span>`).join('')}</div>` : ''}
                     </div>
                     <div class="admin-user-actions">
-                        ${card._isPending ? `<button class="btn-approve" onclick="approveCard(${card.id})">✓ Approve</button>` : ''}
-                        ${card._isPending ? `<button class="btn-reject"  onclick="rejectCard(${card.id})">✗ Reject</button>`   : ''}
-                        <button class="btn-edit" onclick="openEditCardModal(${card.id}, ${card._isPending || false})">✏️ Edit</button>
-                        ${!card._isPending ? `<button class="btn-reject" onclick="deleteCard(${card.id})">🗑️ Delete</button>` : ''}
+                        ${card._isPending ? `<button class="btn-approve" onclick="event.stopPropagation(); approveCard(${card.id})">✓ Approve</button>` : ''}
+                        ${card._isPending ? `<button class="btn-reject"  onclick="event.stopPropagation(); rejectCard(${card.id})">✗ Reject</button>`   : ''}
+                        <button class="btn-edit" onclick="event.stopPropagation(); openEditCardModal(${card.id}, ${card._isPending || false})">✏️ Edit</button>
+                        ${!card._isPending ? `<button class="btn-reject" onclick="event.stopPropagation(); deleteCard(${card.id})">🗑️ Delete</button>` : ''}
                     </div>
                 </div>`).join('');
         }
@@ -2647,6 +2642,7 @@
             loadBrowseCards();
             populateClubsDropdown();
             populateTypesDropdown();
+            updateFilterOptions();
             renderAdminCards();
             alert(`✅ Card approved! ${uploader ? uploader.nickname + ' earned 1 FlipCoin! 🎉' : ''}`);
         }
@@ -3035,14 +3031,24 @@
             const sel = document.getElementById('uploadPlayerTeam');
             if (!sel) return;
             sel.innerHTML = '<option value="">Select Team...</option>' +
-                approvedClubs.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
+                approvedClubs.map(c => `<option value="${c.name}">${c.name}</option>`).join('') +
+                '<option value="__custom__">+ Add New Team</option>';
         }
 
         function handleClubSelect(sel) {
-            const club = approvedClubs.find(c => c.name === sel.value);
+            const customInput = document.getElementById('uploadPlayerTeamCustom');
             const display = document.getElementById('clubIconDisplay');
-            if (!display) return;
             
+            if (sel.value === '__custom__') {
+                if (customInput) customInput.style.display = 'block';
+                if (display) { display.innerHTML = ''; display.dataset.icon = ''; }
+                return;
+            }
+            
+            if (customInput) customInput.style.display = 'none';
+            
+            if (!display) return;
+            const club = approvedClubs.find(c => c.name === sel.value);
             if (club && club.icon) {
                 display.innerHTML = `<img src="${club.icon}" style="width:30px; height:30px; border-radius:6px; object-fit:cover;">`;
                 display.dataset.icon = club.icon;
@@ -3056,10 +3062,18 @@
             const sel = document.getElementById('uploadCardType');
             if (!sel) return;
             sel.innerHTML = '<option value="">Select Type...</option>' +
-                approvedTypes.map(t => `<option value="${t}">${t}</option>`).join('');
+                approvedTypes.map(t => `<option value="${t}">${t}</option>`).join('') +
+                '<option value="__custom__">+ Add New Type</option>';
         }
 
-        function handleTypeSelect(sel) {}
+        function handleTypeSelect(sel) {
+            const customInput = document.getElementById('uploadCardTypeCustom');
+            if (sel.value === '__custom__') {
+                if (customInput) customInput.style.display = 'block';
+            } else {
+                if (customInput) customInput.style.display = 'none';
+            }
+        }
 
         function previewClubIcon(input, previewId, placeholderId) {
             const file = input.files[0];
@@ -3236,11 +3250,11 @@
         // ============================================================
 
         function updateFilterOptions() {
-            const clubSel = document.getElementById('filterClub');
+            const clubSel = document.getElementById('filterTeam');
             const typeSel = document.getElementById('filterType');
             if (clubSel) {
                 clubSel.innerHTML = '<option value="">All Teams</option>' +
-                    approvedClubs.map(c => `<option value="${c.name}">${c.icon || ''} ${c.name}</option>`).join('');
+                    approvedClubs.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
             }
             if (typeSel) {
                 typeSel.innerHTML = '<option value="">All Types</option>' +
