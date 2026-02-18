@@ -1277,7 +1277,7 @@
                 <div class="filter-section">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
                         <h3 style="color:#ffaf00; margin:0;">🔍 Filter Cards</h3>
-                        <button class="btn-small" onclick="clearFilters()" style="width:auto;">Clear Filters</button>
+                        <button class="btn-small" onclick="clearFilters()" style="width:auto; padding:8px 16px; font-size:0.9em;">Clear Filters</button>
                     </div>
                     <div class="filter-row">
                         <input type="text" class="filter-input" id="searchText" placeholder="Search player name..." onkeyup="applyFilters()">
@@ -1335,9 +1335,12 @@
                             </div>
                             <div class="form-group">
                                 <label>Team/Club</label>
-                                <select id="uploadPlayerTeam" onchange="handleClubSelect(this)">
-                                    <option value="">Select Club</option>
-                                </select>
+                                <div style="display:flex; align-items:center; gap:10px;">
+                                    <select id="uploadPlayerTeam" onchange="handleClubSelect(this)" style="flex:1;">
+                                        <option value="">Select Club</option>
+                                    </select>
+                                    <div id="clubIconDisplay" style="width:30px; height:30px;"></div>
+                                </div>
                                 <input type="text" id="uploadPlayerTeamCustom" placeholder="Or enter custom club name" style="margin-top: 10px; display: none;">
                             </div>
                         </div>
@@ -1455,10 +1458,22 @@
             <div id="adminTab-manageClubs" class="admin-tab-content">
                 <div class="admin-panel" style="margin:0;">
                     <h3>⚽ Manage Approved Clubs</h3>
-                    <div style="display:flex; gap:10px; margin-bottom:20px; flex-wrap:wrap;">
-                        <input type="text" id="newClubName" placeholder="Club name" style="flex:1; min-width:150px; padding:10px; border:2px solid #ffd93d; border-radius:8px;">
-                        <input type="text" id="newClubIcon" placeholder="Emoji icon" style="width:90px; padding:10px; border:2px solid #ffd93d; border-radius:8px;">
-                        <button class="btn-approve" onclick="addClub()">Add Club</button>
+                    <div style="margin-bottom:20px;">
+                        <div style="display:flex; gap:10px; margin-bottom:10px; flex-wrap:wrap; align-items:flex-end;">
+                            <div style="flex:1; min-width:200px;">
+                                <label style="display:block; margin-bottom:5px; color:#666;">Club Name</label>
+                                <input type="text" id="newClubName" placeholder="e.g. Manchester City" style="width:100%; padding:10px; border:2px solid #ffd93d; border-radius:8px;">
+                            </div>
+                            <div>
+                                <label style="display:block; margin-bottom:5px; color:#666;">Club Logo</label>
+                                <div style="display:flex; gap:8px; align-items:center;">
+                                    <div id="newClubIconPreview" style="width:40px; height:40px; border:2px dashed #ffd93d; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:0.8em; color:#999;">Logo</div>
+                                    <button type="button" class="btn-small" onclick="document.getElementById('newClubIconInput').click()">Choose</button>
+                                    <input type="file" id="newClubIconInput" accept="image/*" style="display:none;" onchange="previewClubIcon(this, 'newClubIconPreview')">
+                                </div>
+                            </div>
+                            <button class="btn-approve" onclick="addClub()">Add Club</button>
+                        </div>
                     </div>
                     <div id="clubsList"></div>
                 </div>
@@ -2078,17 +2093,19 @@
 
         async function uploadCard(e) {
             e.preventDefault();
-            const playerName = document.getElementById('playerName').value.trim();
-            const team       = document.getElementById('team').value.trim();
-            const clubIcon   = document.getElementById('clubIconDisplay').textContent || '';
-            const cardType   = document.getElementById('cardType').value.trim();
-            const company    = document.getElementById('company').value.trim();
-            const tags       = Array.from(document.querySelectorAll('.tag-checkbox:checked')).map(cb => cb.value);
+            const playerName = document.getElementById('uploadPlayerName').value.trim();
+            const team       = document.getElementById('uploadPlayerTeam').value.trim();
+            const clubIconEl = document.getElementById('clubIconDisplay');
+            const clubIcon   = clubIconEl ? (clubIconEl.dataset.icon || '') : '';
+            const cardType   = document.getElementById('uploadCardType').value.trim();
+            const company    = document.getElementById('uploadCardCompany').value.trim();
+            const tagsInput  = document.getElementById('uploadTags').value.trim();
+            const tags       = tagsInput ? tagsInput.split(',').map(t => t.trim()).filter(Boolean) : [];
 
-            const frontPreview = document.getElementById('frontPreview');
-            const backPreview  = document.getElementById('backPreview');
-            const frontRaw = frontPreview.dataset.imageData || null;
-            const backRaw  = backPreview.dataset.imageData  || null;
+            const frontPreview = document.getElementById('uploadFrontPreview');
+            const backPreview  = document.getElementById('uploadBackPreview');
+            const frontRaw = frontPreview?.querySelector('img')?.src || null;
+            const backRaw  = backPreview?.querySelector('img')?.src || null;
 
             if (!playerName || !team || !cardType || !company) {
                 alert('Please fill in all required fields!'); return;
@@ -2114,9 +2131,9 @@
                     createdAt: new Date().toISOString(),
                     approved: false,
                     userInteractions: {
-                        like: document.getElementById('selfLike')?.checked || false,
-                        own:  document.getElementById('selfOwn')?.checked  || false,
-                        want: document.getElementById('selfWant')?.checked  || false
+                        like: document.getElementById('uploadLike')?.checked || false,
+                        own:  document.getElementById('uploadOwn')?.checked  || false,
+                        want: document.getElementById('uploadWant')?.checked  || false
                     }
                 };
 
@@ -2132,12 +2149,9 @@
 
                 alert('Card submitted for review! You earned 1 FlipCoin! 🎉');
                 e.target.reset();
-                frontPreview.innerHTML = 'Front';
-                frontPreview.dataset.imageData = '';
-                backPreview.innerHTML = 'Back';
-                backPreview.dataset.imageData = '';
-                document.getElementById('clubIconDisplay').textContent = '';
-                document.querySelectorAll('.tag-checkbox').forEach(cb => cb.checked = false);
+                if (frontPreview) frontPreview.innerHTML = '';
+                if (backPreview) backPreview.innerHTML = '';
+                if (clubIconEl) { clubIconEl.innerHTML = ''; clubIconEl.dataset.icon = ''; }
             } catch(err) {
                 console.error('Upload error:', err);
                 alert('Upload failed, please try again.');
@@ -2250,7 +2264,7 @@
                                 ${editBtn}
                             </div>
                         </div>
-                        <div class="card-detail"><strong>Team:</strong><span>${card.team} ${card.clubIcon || ''}</span></div>
+                        <div class="card-detail"><strong>Team:</strong><span>${card.team} ${card.clubIcon ? `<img src="${card.clubIcon}" style="width:20px;height:20px;border-radius:4px;object-fit:cover;margin-left:4px;vertical-align:middle;">` : ''}</span></div>
                         <div class="card-detail"><strong>Type:</strong><span>${card.cardType}</span></div>
                         <div class="card-detail"><strong>Company:</strong><span>${card.company}</span></div>
                         ${tagsHtml}
@@ -2383,7 +2397,7 @@
                     </div>
                     <div class="card-info">
                         <h3>${card.playerName}</h3>
-                        <div class="card-detail"><strong>Team:</strong><span>${card.team} ${card.clubIcon || ''}</span></div>
+                        <div class="card-detail"><strong>Team:</strong><span>${card.team} ${card.clubIcon ? `<img src="${card.clubIcon}" style="width:18px;height:18px;border-radius:3px;object-fit:cover;vertical-align:middle;">` : ''}</span></div>
                         <div class="card-detail"><strong>Type:</strong><span>${card.cardType}</span></div>
                         <div class="card-detail"><strong>Company:</strong><span>${card.company}</span></div>
                         ${actionTagsHtml}
@@ -2582,7 +2596,7 @@
                             ${card.playerName}
                             ${card._isPending ? '<span style="background:#FF9800;color:white;padding:2px 8px;border-radius:10px;font-size:0.75em;margin-left:6px;">⏳ Pending</span>' : ''}
                         </div>
-                        <div style="color:#999;font-size:0.85em;margin-top:3px;">${card.team} ${card.clubIcon || ''} · ${card.cardType} · ${card.company}</div>
+                        <div style="color:#999;font-size:0.85em;margin-top:3px;">${card.team} ${card.clubIcon ? `<img src="${card.clubIcon}" style="width:18px;height:18px;border-radius:3px;object-fit:cover;vertical-align:middle;">` : ''} · ${card.cardType} · ${card.company}</div>
                         <div style="color:#bbb;font-size:0.8em;">⬆️ ${card.uploaderNickname || 'unknown'} · #${card.id}</div>
                         ${card.tags && card.tags.length > 0 ? `<div class="tags" style="margin-top:4px;">${card.tags.map(t => `<span class="tag">${t}</span>`).join('')}</div>` : ''}
                     </div>
@@ -2602,7 +2616,7 @@
             card.approved = true;
 
             // Add club/type if new
-            if (!approvedClubs.find(c => c.name === card.team)) approvedClubs.push({name: card.team, icon: card.clubIcon || '⚽'});
+            if (!approvedClubs.find(c => c.name === card.team)) approvedClubs.push({name: card.team, icon: card.clubIcon || null});
             if (!approvedTypes.includes(card.cardType)) approvedTypes.push(card.cardType);
 
             const ix = {
@@ -3018,19 +3032,28 @@
         // ============================================================
 
         function populateClubsDropdown() {
-            const sel = document.getElementById('team');
+            const sel = document.getElementById('uploadPlayerTeam');
             if (!sel) return;
             sel.innerHTML = '<option value="">Select Team...</option>' +
-                approvedClubs.map(c => `<option value="${c.name}">${c.icon || ''} ${c.name}</option>`).join('');
+                approvedClubs.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
         }
 
         function handleClubSelect(sel) {
             const club = approvedClubs.find(c => c.name === sel.value);
-            document.getElementById('clubIconDisplay').textContent = club ? club.icon : '';
+            const display = document.getElementById('clubIconDisplay');
+            if (!display) return;
+            
+            if (club && club.icon) {
+                display.innerHTML = `<img src="${club.icon}" style="width:30px; height:30px; border-radius:6px; object-fit:cover;">`;
+                display.dataset.icon = club.icon;
+            } else {
+                display.innerHTML = '';
+                display.dataset.icon = '';
+            }
         }
 
         function populateTypesDropdown() {
-            const sel = document.getElementById('cardType');
+            const sel = document.getElementById('uploadCardType');
             if (!sel) return;
             sel.innerHTML = '<option value="">Select Type...</option>' +
                 approvedTypes.map(t => `<option value="${t}">${t}</option>`).join('');
@@ -3038,12 +3061,24 @@
 
         function handleTypeSelect(sel) {}
 
+        function previewClubIcon(input, previewId, placeholderId) {
+            const file = input.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                document.getElementById(previewId).src = e.target.result;
+                document.getElementById(previewId).style.display = 'block';
+                if (placeholderId) document.getElementById(placeholderId).style.display = 'none';
+            };
+            reader.readAsDataURL(file);
+        }
+
         function loadClubsList() {
             const container = document.getElementById('clubsList');
             if (!container) return;
             container.innerHTML = approvedClubs.map((c, i) => `
                 <div style="display:flex;align-items:center;gap:10px;padding:10px;background:white;border-radius:8px;border:2px solid #ffd93d;margin-bottom:8px;">
-                    <span style="font-size:1.5em;">${c.icon || '⚽'}</span>
+                    ${c.icon ? `<img src="${c.icon}" style="width:40px;height:40px;border-radius:8px;object-fit:cover;">` : '<div style="width:40px;height:40px;border-radius:8px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;font-size:0.8em;">⚽</div>'}
                     <span style="flex:1;font-weight:bold;">${c.name}</span>
                     <button class="btn-edit" onclick="openEditClubModal(${i})" style="width:auto;padding:4px 10px;">Edit</button>
                     <button class="btn-reject" onclick="removeClub(${i})" style="width:auto;padding:4px 10px;">Remove</button>
@@ -3052,15 +3087,31 @@
 
         async function addClub() {
             const name = document.getElementById('newClubName').value.trim();
-            const icon = document.getElementById('newClubIcon').value.trim();
+            const iconInput = document.getElementById('newClubIconInput');
+            
             if (!name) { alert('Enter a club name'); return; }
             if (approvedClubs.find(c => c.name === name)) { alert('Club already exists'); return; }
-            approvedClubs.push({name, icon: icon || '⚽'});
-            await saveMeta();
-            loadClubsList();
-            populateClubsDropdown();
-            document.getElementById('newClubName').value = '';
-            document.getElementById('newClubIcon').value = '';
+            
+            if (iconInput && iconInput.files[0]) {
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    const compressed = await compressImage(e.target.result);
+                    approvedClubs.push({name, icon: compressed});
+                    await saveMeta();
+                    loadClubsList();
+                    populateClubsDropdown();
+                    document.getElementById('newClubName').value = '';
+                    iconInput.value = '';
+                    document.getElementById('newClubIconPreview').innerHTML = 'Logo';
+                };
+                reader.readAsDataURL(iconInput.files[0]);
+            } else {
+                approvedClubs.push({name, icon: null});
+                await saveMeta();
+                loadClubsList();
+                populateClubsDropdown();
+                document.getElementById('newClubName').value = '';
+            }
         }
 
         function openEditClubModal(index) {
@@ -3068,7 +3119,16 @@
             if (!club) return;
             document.getElementById('editClubIndex').value = index;
             document.getElementById('editClubName').value  = club.name;
-            document.getElementById('editClubIcon').value  = club.icon || '';
+            
+            if (club.icon) {
+                document.getElementById('editClubIconPreview').src = club.icon;
+                document.getElementById('editClubIconPreview').style.display = 'block';
+                document.getElementById('editClubIconPlaceholder').style.display = 'none';
+            } else {
+                document.getElementById('editClubIconPreview').style.display = 'none';
+                document.getElementById('editClubIconPlaceholder').style.display = 'flex';
+            }
+            
             document.getElementById('editClubModal').classList.add('active');
         }
 
@@ -3078,7 +3138,7 @@
             if (!club) return;
             
             const newName = document.getElementById('editClubName').value.trim();
-            const newIcon = document.getElementById('editClubIcon').value.trim();
+            const iconInput = document.getElementById('editClubIconInput');
             
             if (!newName) { alert('Club name cannot be empty'); return; }
             if (approvedClubs.find((c, i) => c.name === newName && i !== index)) {
@@ -3086,7 +3146,19 @@
             }
             
             club.name = newName;
-            club.icon = newIcon || '⚽';
+            
+            if (iconInput && iconInput.files[0]) {
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    club.icon = await compressImage(e.target.result);
+                    await saveMeta();
+                    document.getElementById('editClubModal').classList.remove('active');
+                    loadClubsList();
+                    populateClubsDropdown();
+                };
+                reader.readAsDataURL(iconInput.files[0]);
+                return;
+            }
             
             await saveMeta();
             document.getElementById('editClubModal').classList.remove('active');
@@ -3247,8 +3319,13 @@
                 <input type="text" id="editClubName">
             </div>
             <div class="form-group">
-                <label>Club Icon (emoji)</label>
-                <input type="text" id="editClubIcon" placeholder="e.g. ⚽ 💙 ❤️">
+                <label>Club Logo</label>
+                <div style="display:flex; gap:10px; align-items:center;">
+                    <img id="editClubIconPreview" style="width:50px; height:50px; border-radius:8px; object-fit:cover; display:none;">
+                    <div id="editClubIconPlaceholder" style="width:50px; height:50px; border:2px dashed #ffd93d; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:0.8em; color:#999;">Logo</div>
+                    <button type="button" class="btn-small" onclick="document.getElementById('editClubIconInput').click()">Choose Logo</button>
+                    <input type="file" id="editClubIconInput" accept="image/*" style="display:none;" onchange="previewClubIcon(this, 'editClubIconPreview', 'editClubIconPlaceholder')">
+                </div>
             </div>
             <div style="display:flex; gap:10px; margin-top:20px;">
                 <button class="btn" onclick="saveEditedClub()">Save Changes</button>
