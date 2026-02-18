@@ -1728,6 +1728,11 @@
                 approvedTypes    = typesDoc.exists  ? typesDoc.data().list  : [];
                 followRequests   = buildFollowRequests();
 
+                console.log('📊 Data loaded from Firebase:');
+                console.log('Cards loaded:', cards);
+                console.log('Cards with approved=true:', cards.filter(c => c.approved === true));
+                console.log('Cards with approved!==false:', cards.filter(c => c.approved !== false));
+
                 // Cache to localStorage
                 cacheToLocal();
 
@@ -2167,7 +2172,11 @@
         // ============================================================
 
         function loadBrowseCards() {
-            const container = document.getElementById('browseContent');
+            const container = document.getElementById('browseCardsList');
+            if (!container) {
+                console.log('⚠️ browseCardsList element not found');
+                return;
+            }
             const approved = cards.filter(c => c.approved !== false);
             console.log('Total cards:', cards.length);
             console.log('Approved cards:', approved.length);
@@ -2176,7 +2185,7 @@
                 container.innerHTML = `<div class="empty-state"><div class="empty-state-icon">🎴</div><h3>No cards yet</h3><p>Be the first to upload a card!</p></div>`;
                 return;
             }
-            container.innerHTML = `<div class="cards-grid">${approved.map(c => renderCard(c)).join('')}</div>`;
+            container.innerHTML = approved.map(c => renderCard(c)).join('');
         }
 
         function applyFilters() {
@@ -2195,12 +2204,13 @@
             if (typeF) filtered = filtered.filter(c => c.cardType === typeF);
             if (companyF) filtered = filtered.filter(c => c.company === companyF);
 
-            const container = document.getElementById('browseContent');
+            const container = document.getElementById('browseCardsList');
+            if (!container) return;
             if (filtered.length === 0) {
                 container.innerHTML = `<div class="empty-state"><div class="empty-state-icon">🔍</div><h3>No cards match</h3><p>Try different filters</p></div>`;
                 return;
             }
-            container.innerHTML = `<div class="cards-grid">${filtered.map(c => renderCard(c)).join('')}</div>`;
+            container.innerHTML = filtered.map(c => renderCard(c)).join('');
         }
 
         function clearFilters() {
@@ -2632,6 +2642,9 @@
                 saveMeta()
             ]);
 
+            // Force reload cards from localStorage to ensure sync
+            cards = JSON.parse(localStorage.getItem('flipsidCards')) || [];
+            
             loadBrowseCards();
             populateClubsDropdown();
             populateTypesDropdown();
