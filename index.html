@@ -1275,7 +1275,10 @@
             <!-- Browse Cards Tab -->
             <div id="browseTab" class="tab-content active">
                 <div class="filter-section">
-                    <h3 style="color: #ffaf00; margin-bottom: 15px;">🔍 Filter Cards</h3>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                        <h3 style="color:#ffaf00; margin:0;">🔍 Filter Cards</h3>
+                        <button class="btn-small" onclick="clearFilters()" style="width:auto;">Clear Filters</button>
+                    </div>
                     <div class="filter-row">
                         <input type="text" class="filter-input" id="searchText" placeholder="Search player name..." onkeyup="applyFilters()">
                         <select class="filter-input" id="filterTeam" onchange="applyFilters()">
@@ -1290,7 +1293,6 @@
                             <option value="Premier League">Premier League</option>
                         </select>
                     </div>
-                    <button class="btn-small" onclick="clearFilters()" style="width: auto;">Clear Filters</button>
                 </div>
                 <div id="browseCardsList" class="cards-grid"></div>
             </div>
@@ -1555,15 +1557,28 @@
             <form id="editProfileForm">
                 <div class="form-group">
                     <label>Profile Picture</label>
-                    <img id="currentProfilePic" class="profile-pic-upload" style="display:none;">
-                    <div class="profile-pic-placeholder" id="editProfilePicPlaceholder" onclick="document.getElementById('editProfilePicInput').click()">
-                        📷
+                    <div style="display:flex; gap:10px; align-items:center;">
+                        <img id="editProfileCurrentPic" style="width:60px; height:60px; border-radius:50%; object-fit:cover; display:none;">
+                        <div class="profile-pic-placeholder" id="editProfilePicPlaceholder" style="width:60px; height:60px; cursor:pointer;">📷</div>
+                        <button type="button" class="btn-small" onclick="document.getElementById('editProfilePicInput').click()">Choose Photo</button>
                     </div>
-                    <input type="file" id="editProfilePicInput" accept="image/*" style="display:none;" onchange="previewProfilePic(this, 'currentProfilePic', 'editProfilePicPlaceholder')">
+                    <input type="file" id="editProfilePicInput" accept="image/*" style="display:none;" onchange="previewProfilePic(this, 'editProfileCurrentPic', 'editProfilePicPlaceholder')">
+                </div>
+                <div class="form-group">
+                    <label>Full Name</label>
+                    <input type="text" id="editProfileFullName" required>
                 </div>
                 <div class="form-group">
                     <label>Nickname</label>
                     <input type="text" id="editProfileNickname" required>
+                </div>
+                <div class="form-group">
+                    <label>Mobile</label>
+                    <input type="text" id="editProfileMobile" placeholder="Optional">
+                </div>
+                <div class="form-group">
+                    <label>New Password (leave blank to keep current)</label>
+                    <input type="password" id="editProfilePassword" placeholder="Min 4 characters">
                 </div>
                 <div style="display: flex; gap: 10px; margin-top: 20px;">
                     <button type="button" class="btn" onclick="saveProfile()">Save Changes</button>
@@ -1604,7 +1619,7 @@
 
     <script>
         // ============================================================
-        // FIREBASE CONFIG - Replace with your own config after setup!
+        // FIREBASE CONFIG
         // ============================================================
         const firebaseConfig = {
             apiKey: "AIzaSyAQiIbHoTyddxVdoT0UlgSp9P9mqQDYFbg",
@@ -1616,111 +1631,252 @@
             measurementId: "G-F2PNQMH1YF"
         };
 
-        // Initialize Firebase
         let db = null;
         let useFirebase = false;
-
         try {
             firebase.initializeApp(firebaseConfig);
             db = firebase.firestore();
             useFirebase = true;
-            console.log('✅ Firebase initialized successfully');
+            console.log('✅ Firebase initialized');
         } catch(e) {
             console.log('❌ Firebase init error:', e);
-            useFirebase = false;
         }
 
         // ============================================================
-        // DATA LAYER - works with both Firebase and localStorage
+        // IMAGE COMPRESSION - 600px, 70% JPEG quality
         // ============================================================
+        function compressImage(dataUrl) {
+            return new Promise((resolve) => {
+                if (!dataUrl || !dataUrl.startsWith('data:image')) { resolve(dataUrl); return; }
+                const img = new Image();
+                img.onload = () => {
+                    const MAX = 600;
+                    let w = img.width, h = img.height;
+                    if (w > MAX || h > MAX) {
+                        if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
+                        else       { w = Math.round(w * MAX / h); h = MAX; }
+                    }
+                    const canvas = document.createElement('canvas');
+                    canvas.width = w; canvas.height = h;
+                    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                    resolve(canvas.toDataURL('image/jpeg', 0.7));
+                };
+                img.onerror = () => resolve(dataUrl);
+                img.src = dataUrl;
+            });
+        }
+
+        // ============================================================
+        // FIRESTORE DATA LAYER
+        // New structure: individual documents per record
+        //   users/{userId}
+        //   cards/{cardId}
+        //   pendingCards/{cardId}
+        //   interactions/{cardId}
+        //   follows/{userId}
+        //   meta/approvedClubs
+        //   meta/approvedTypes
+        // ============================================================
+
         let currentUser = null;
-        let users = JSON.parse(localStorage.getItem('flipsidUsers')) || [];
-        let cards = JSON.parse(localStorage.getItem('flipsidCards')) || [];
-        let cardInteractions = JSON.parse(localStorage.getItem('flipsidCardInteractions')) || {};
-        let pendingCards = JSON.parse(localStorage.getItem('flipsidPendingCards')) || [];
-        let follows = JSON.parse(localStorage.getItem('flipsidFollows')) || {};
-        let followRequests = JSON.parse(localStorage.getItem('flipsidFollowRequests')) || {};
-        let approvedClubs = JSON.parse(localStorage.getItem('flipsidApprovedClubs')) || [];
-        let approvedTypes = JSON.parse(localStorage.getItem('flipsidApprovedTypes')) || [];
+        let users = [];
+        let cards = [];
+        let cardInteractions = {};
+        let pendingCards = [];
+        let follows = {};
+        let followRequests = {};
+        let approvedClubs = [];
+        let approvedTypes = [];
         let currentYourCardsFilter = 'all';
 
-        // Save helpers - write to localStorage always, Firebase if configured
-        async function saveData(key, data) {
-            localStorage.setItem(key, JSON.stringify(data));
-            if (useFirebase) {
-                try {
-                    await db.collection('flipsid').doc(key).set({ data: JSON.stringify(data) });
-                } catch(e) { console.log('Firebase write error:', e); }
-            }
-        }
+        // ── READ ─────────────────────────────────────────────────────
 
-        async function loadFromFirebase() {
+        async function loadAllData() {
             const statusEl = document.getElementById('firebaseStatus');
             if (!useFirebase) {
-                console.log('⚠️ Firebase disabled, using localStorage');
-                if (statusEl) statusEl.innerHTML = '⚠️ Offline mode (localStorage)';
+                if (statusEl) statusEl.innerHTML = '⚠️ Offline mode';
+                loadFromLocalStorage();
                 return;
             }
             try {
-                if (statusEl) statusEl.innerHTML = '🔄 Connecting to Firebase...';
-                const collections = ['flipsidUsers','flipsidCards','flipsidCardInteractions',
-                    'flipsidPendingCards','flipsidFollows','flipsidFollowRequests',
-                    'flipsidApprovedClubs','flipsidApprovedTypes'];
-                
-                for (const key of collections) {
-                    const doc = await db.collection('flipsid').doc(key).get();
-                    if (doc.exists) {
-                        const parsed = JSON.parse(doc.data().data);
-                        localStorage.setItem(key, JSON.stringify(parsed));
-                        if (key === 'flipsidUsers') users = parsed;
-                        if (key === 'flipsidCards') cards = parsed;
-                        if (key === 'flipsidCardInteractions') cardInteractions = parsed;
-                        if (key === 'flipsidPendingCards') pendingCards = parsed;
-                        if (key === 'flipsidFollows') follows = parsed;
-                        if (key === 'flipsidFollowRequests') followRequests = parsed;
-                        if (key === 'flipsidApprovedClubs') approvedClubs = parsed;
-                        if (key === 'flipsidApprovedTypes') approvedTypes = parsed;
-                        console.log(`✅ Loaded ${key} from Firebase`);
-                    } else {
-                        console.log(`ℹ️ ${key} not in Firebase yet, using localStorage`);
-                    }
-                }
-                if (statusEl) statusEl.innerHTML = '🔥 Firebase connected';
-                setTimeout(() => { if (statusEl) statusEl.style.display = 'none'; }, 3000);
-                console.log('✅ Firebase load complete');
+                if (statusEl) statusEl.innerHTML = '🔄 Connecting...';
+
+                const [usersSnap, cardsSnap, pendingSnap, interactionsSnap,
+                       followsSnap, clubsDoc, typesDoc] = await Promise.all([
+                    db.collection('users').get(),
+                    db.collection('cards').get(),
+                    db.collection('pendingCards').get(),
+                    db.collection('interactions').get(),
+                    db.collection('follows').get(),
+                    db.collection('meta').doc('approvedClubs').get(),
+                    db.collection('meta').doc('approvedTypes').get()
+                ]);
+
+                users            = usersSnap.docs.map(d => d.data());
+                cards            = cardsSnap.docs.map(d => d.data());
+                pendingCards     = pendingSnap.docs.map(d => d.data());
+                cardInteractions = {};
+                interactionsSnap.docs.forEach(d => { cardInteractions[d.id] = d.data(); });
+                follows          = {};
+                followsSnap.docs.forEach(d => { follows[d.id] = d.data(); });
+                approvedClubs    = clubsDoc.exists  ? clubsDoc.data().list  : [];
+                approvedTypes    = typesDoc.exists  ? typesDoc.data().list  : [];
+                followRequests   = buildFollowRequests();
+
+                // Cache to localStorage
+                cacheToLocal();
+
+                if (statusEl) { statusEl.innerHTML = '🔥 Firebase connected'; setTimeout(() => statusEl.style.display='none', 3000); }
+                console.log(`✅ Loaded: ${users.length} users, ${cards.length} cards, ${pendingCards.length} pending`);
             } catch(e) {
-                console.log('❌ Firebase read error:', e);
-                if (statusEl) statusEl.innerHTML = '❌ Firebase error: ' + e.message;
+                console.log('❌ Firebase load error:', e);
+                if (statusEl) statusEl.innerHTML = '❌ Firebase error';
+                loadFromLocalStorage();
             }
         }
 
-        // Top 100 Football Players - Topps Match Attax & Premier League only
-        window.onload = async function() {
-            await loadFromFirebase();
-            checkAuth();
-        };
+        function buildFollowRequests() {
+            // followRequests[targetId] = [requesterId, ...]
+            const fr = {};
+            Object.keys(follows).forEach(uid => {
+                const fdata = follows[uid];
+                if (fdata.requests) {
+                    fdata.requests.forEach(targetId => {
+                        if (!fr[targetId]) fr[targetId] = [];
+                        fr[targetId].push(parseInt(uid));
+                    });
+                }
+            });
+            return fr;
+        }
+
+        function cacheToLocal() {
+            localStorage.setItem('flipsidUsers',            JSON.stringify(users));
+            localStorage.setItem('flipsidCards',            JSON.stringify(cards));
+            localStorage.setItem('flipsidPendingCards',     JSON.stringify(pendingCards));
+            localStorage.setItem('flipsidCardInteractions', JSON.stringify(cardInteractions));
+            localStorage.setItem('flipsidFollows',          JSON.stringify(follows));
+            localStorage.setItem('flipsidApprovedClubs',    JSON.stringify(approvedClubs));
+            localStorage.setItem('flipsidApprovedTypes',    JSON.stringify(approvedTypes));
+        }
+
+        function loadFromLocalStorage() {
+            users            = JSON.parse(localStorage.getItem('flipsidUsers'))            || [];
+            cards            = JSON.parse(localStorage.getItem('flipsidCards'))            || [];
+            pendingCards     = JSON.parse(localStorage.getItem('flipsidPendingCards'))     || [];
+            cardInteractions = JSON.parse(localStorage.getItem('flipsidCardInteractions')) || {};
+            follows          = JSON.parse(localStorage.getItem('flipsidFollows'))          || {};
+            approvedClubs    = JSON.parse(localStorage.getItem('flipsidApprovedClubs'))    || [];
+            approvedTypes    = JSON.parse(localStorage.getItem('flipsidApprovedTypes'))    || [];
+            followRequests   = buildFollowRequests();
+        }
+
+        // ── WRITE ────────────────────────────────────────────────────
+
+        async function saveUser(user) {
+            const id = String(user.id);
+            localStorage.setItem('flipsidUsers', JSON.stringify(users));
+            if (!useFirebase) return;
+            try { await db.collection('users').doc(id).set(user); }
+            catch(e) { console.log('saveUser error:', e); }
+        }
+
+        async function saveCard(card) {
+            const id = String(card.id);
+            // Update in-memory cards array
+            const idx = cards.findIndex(c => String(c.id) === id);
+            if (idx >= 0) cards[idx] = card; else cards.push(card);
+            localStorage.setItem('flipsidCards', JSON.stringify(cards));
+            if (!useFirebase) return;
+            try { await db.collection('cards').doc(id).set(card); }
+            catch(e) { console.log('saveCard error:', e); }
+        }
+
+        async function deleteCardFromDB(cardId) {
+            const id = String(cardId);
+            cards = cards.filter(c => String(c.id) !== id);
+            delete cardInteractions[cardId];
+            localStorage.setItem('flipsidCards', JSON.stringify(cards));
+            localStorage.setItem('flipsidCardInteractions', JSON.stringify(cardInteractions));
+            if (!useFirebase) return;
+            try {
+                await Promise.all([
+                    db.collection('cards').doc(id).delete(),
+                    db.collection('interactions').doc(id).delete()
+                ]);
+            } catch(e) { console.log('deleteCard error:', e); }
+        }
+
+        async function savePendingCard(card) {
+            const id = String(card.id);
+            const idx = pendingCards.findIndex(c => String(c.id) === id);
+            if (idx >= 0) pendingCards[idx] = card; else pendingCards.push(card);
+            localStorage.setItem('flipsidPendingCards', JSON.stringify(pendingCards));
+            if (!useFirebase) return;
+            try { await db.collection('pendingCards').doc(id).set(card); }
+            catch(e) { console.log('savePendingCard error:', e); }
+        }
+
+        async function deletePendingCard(cardId) {
+            const id = String(cardId);
+            pendingCards = pendingCards.filter(c => String(c.id) !== id);
+            localStorage.setItem('flipsidPendingCards', JSON.stringify(pendingCards));
+            if (!useFirebase) return;
+            try { await db.collection('pendingCards').doc(id).delete(); }
+            catch(e) { console.log('deletePendingCard error:', e); }
+        }
+
+        async function saveInteractions(cardId, data) {
+            const id = String(cardId);
+            cardInteractions[id] = data;
+            localStorage.setItem('flipsidCardInteractions', JSON.stringify(cardInteractions));
+            if (!useFirebase) return;
+            try { await db.collection('interactions').doc(id).set(data); }
+            catch(e) { console.log('saveInteractions error:', e); }
+        }
+
+        async function saveFollows(userId, data) {
+            const id = String(userId);
+            follows[id] = data;
+            followRequests = buildFollowRequests();
+            localStorage.setItem('flipsidFollows', JSON.stringify(follows));
+            if (!useFirebase) return;
+            try { await db.collection('follows').doc(id).set(data); }
+            catch(e) { console.log('saveFollows error:', e); }
+        }
+
+        async function saveMeta() {
+            localStorage.setItem('flipsidApprovedClubs', JSON.stringify(approvedClubs));
+            localStorage.setItem('flipsidApprovedTypes', JSON.stringify(approvedTypes));
+            if (!useFirebase) return;
+            try {
+                await Promise.all([
+                    db.collection('meta').doc('approvedClubs').set({ list: approvedClubs }),
+                    db.collection('meta').doc('approvedTypes').set({ list: approvedTypes })
+                ]);
+            } catch(e) { console.log('saveMeta error:', e); }
+        }
+
+        // ============================================================
+        // AUTH
+        // ============================================================
 
         function togglePasswordVisibility(inputId, eyeId) {
             const input = document.getElementById(inputId);
             const eye = document.getElementById(eyeId);
-            if (input.type === 'password') {
-                input.type = 'text';
-                eye.textContent = '🙈';
-            } else {
-                input.type = 'password';
-                eye.textContent = '👁️';
-            }
+            if (input.type === 'password') { input.type = 'text'; eye.textContent = '🙈'; }
+            else { input.type = 'password'; eye.textContent = '👁️'; }
         }
 
         function checkAuth() {
-            const savedUser = localStorage.getItem('flipsidCurrentUser');
-            if (savedUser) {
-                currentUser = JSON.parse(savedUser);
-                if (currentUser.approved) {
-                    showDashboard();
-                } else {
-                    showPendingApproval();
-                }
+            const stored = localStorage.getItem('flipsidCurrentUser');
+            if (stored) {
+                const saved = JSON.parse(stored);
+                // Refresh from latest users array
+                const fresh = users.find(u => String(u.id) === String(saved.id));
+                currentUser = fresh || saved;
+                if (!currentUser.approved) { showPendingApproval(); return; }
+                showDashboard();
             } else {
                 showLogin();
             }
@@ -1731,6 +1887,9 @@
             document.getElementById('signupForm').classList.add('hidden');
             document.getElementById('pendingApproval').classList.add('hidden');
             document.getElementById('dashboard').classList.add('hidden');
+            document.getElementById('adminPage').classList.add('hidden');
+            document.getElementById('authButtons').classList.remove('hidden');
+            document.getElementById('userSection').classList.add('hidden');
         }
 
         function showSignup() {
@@ -1738,6 +1897,9 @@
             document.getElementById('loginForm').classList.add('hidden');
             document.getElementById('pendingApproval').classList.add('hidden');
             document.getElementById('dashboard').classList.add('hidden');
+            document.getElementById('adminPage').classList.add('hidden');
+            document.getElementById('authButtons').classList.remove('hidden');
+            document.getElementById('userSection').classList.add('hidden');
         }
 
         function showPendingApproval() {
@@ -1745,6 +1907,9 @@
             document.getElementById('loginForm').classList.add('hidden');
             document.getElementById('signupForm').classList.add('hidden');
             document.getElementById('dashboard').classList.add('hidden');
+            document.getElementById('adminPage').classList.add('hidden');
+            document.getElementById('authButtons').classList.add('hidden');
+            document.getElementById('userSection').classList.add('hidden');
         }
 
         function showDashboard() {
@@ -1755,10 +1920,10 @@
             document.getElementById('pendingApproval').classList.add('hidden');
             document.getElementById('authButtons').classList.add('hidden');
             document.getElementById('userSection').classList.remove('hidden');
-            
+
             document.getElementById('userName').textContent = currentUser.nickname;
             document.getElementById('headerFlipcoins').textContent = currentUser.flipcoins || 0;
-            
+
             if (currentUser.profilePic) {
                 document.getElementById('userProfilePic').src = currentUser.profilePic;
                 document.getElementById('userProfilePic').style.display = 'block';
@@ -1768,7 +1933,7 @@
                 document.getElementById('userProfilePic').style.display = 'none';
                 document.getElementById('userAvatar').style.display = 'flex';
             }
-            
+
             if (currentUser.isAdmin) {
                 document.getElementById('adminBadge').classList.remove('hidden');
                 document.getElementById('adminPageBtn').classList.remove('hidden');
@@ -1776,7 +1941,7 @@
                 document.getElementById('adminBadge').classList.add('hidden');
                 document.getElementById('adminPageBtn').classList.add('hidden');
             }
-            
+
             populateClubsDropdown();
             populateTypesDropdown();
             loadBrowseCards();
@@ -1793,7 +1958,6 @@
             loadClubsList();
             loadTypesList();
             renderAdminUsers();
-            // Activate users tab
             document.querySelectorAll('.admin-tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.admin-tab-content').forEach(c => c.classList.remove('active'));
             document.querySelector('.admin-tab').classList.add('active');
@@ -1814,7 +1978,423 @@
             if (tabName === 'cards') renderAdminCards();
         }
 
-        // ── ADMIN USERS TAB ──────────────────────────────────────────
+        function login(e) {
+            e.preventDefault();
+            const nickname = document.getElementById('loginNickname').value.trim();
+            const password = document.getElementById('loginPassword').value;
+            const user = users.find(u => u.nickname === nickname && u.password === password);
+            if (user) {
+                if (!user.approved) {
+                    currentUser = user;
+                    localStorage.setItem('flipsidCurrentUser', JSON.stringify(user));
+                    showPendingApproval();
+                    return;
+                }
+                currentUser = user;
+                localStorage.setItem('flipsidCurrentUser', JSON.stringify(user));
+                showDashboard();
+            } else {
+                document.getElementById('loginError').textContent = 'Wrong nickname or password!';
+                document.getElementById('loginError').style.display = 'block';
+            }
+        }
+
+        function signup(e) {
+            e.preventDefault();
+            const fullName = document.getElementById('signupFullName').value.trim();
+            const nickname = document.getElementById('signupNickname').value.trim();
+            const password = document.getElementById('signupPassword').value;
+            const confirm  = document.getElementById('signupConfirmPassword').value;
+            const errorEl  = document.getElementById('signupError');
+
+            if (password !== confirm) { errorEl.textContent = 'Passwords do not match!'; errorEl.style.display='block'; return; }
+            if (password.length < 4)  { errorEl.textContent = 'Password must be at least 4 characters!'; errorEl.style.display='block'; return; }
+            if (users.find(u => u.nickname === nickname)) { errorEl.textContent = 'Nickname already taken!'; errorEl.style.display='block'; return; }
+
+            const newUser = {
+                id: Date.now(),
+                fullName, nickname, password,
+                isAdmin: false, isSuperAdmin: false,
+                approved: false, flipcoins: 0, profilePic: null
+            };
+            users.push(newUser);
+            saveUser(newUser);
+            currentUser = newUser;
+            localStorage.setItem('flipsidCurrentUser', JSON.stringify(newUser));
+            showPendingApproval();
+        }
+
+        function logout() {
+            currentUser = null;
+            localStorage.removeItem('flipsidCurrentUser');
+            showLogin();
+        }
+
+        // ============================================================
+        // TABS
+        // ============================================================
+
+        function switchTab(tab) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById(tab + 'Tab').classList.add('active');
+            if (tab === 'browse')    loadBrowseCards();
+            if (tab === 'yourCards') loadYourCards();
+            if (tab === 'friends')   loadFriends();
+        }
+
+        // ============================================================
+        // IMAGE PREVIEW
+        // ============================================================
+
+        function previewImage(input, previewId) {
+            const file = input.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const preview = document.getElementById(previewId);
+                preview.innerHTML = `<img src="${e.target.result}" style="width:100%;height:100%;object-fit:cover;border-radius:8px;">`;
+                preview.dataset.imageData = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function previewProfilePic(input, imgId, placeholderId) {
+            const file = input.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                document.getElementById(imgId).src = e.target.result;
+                document.getElementById(imgId).style.display = 'block';
+                if (placeholderId) document.getElementById(placeholderId).style.display = 'none';
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // ============================================================
+        // UPLOAD CARD
+        // ============================================================
+
+        async function uploadCard(e) {
+            e.preventDefault();
+            const playerName = document.getElementById('playerName').value.trim();
+            const team       = document.getElementById('team').value.trim();
+            const clubIcon   = document.getElementById('clubIconDisplay').textContent || '';
+            const cardType   = document.getElementById('cardType').value.trim();
+            const company    = document.getElementById('company').value.trim();
+            const tags       = Array.from(document.querySelectorAll('.tag-checkbox:checked')).map(cb => cb.value);
+
+            const frontPreview = document.getElementById('frontPreview');
+            const backPreview  = document.getElementById('backPreview');
+            const frontRaw = frontPreview.dataset.imageData || null;
+            const backRaw  = backPreview.dataset.imageData  || null;
+
+            if (!playerName || !team || !cardType || !company) {
+                alert('Please fill in all required fields!'); return;
+            }
+
+            const submitBtn = e.target.querySelector('button[type="submit"]');
+            submitBtn.textContent = '⏳ Compressing & uploading...';
+            submitBtn.disabled = true;
+
+            try {
+                // Compress images
+                const [frontImage, backImage] = await Promise.all([
+                    compressImage(frontRaw),
+                    compressImage(backRaw)
+                ]);
+
+                const card = {
+                    id: Date.now(),
+                    playerName, team, clubIcon, cardType, company, tags,
+                    frontImage, backImage,
+                    uploadedBy: currentUser.id,
+                    uploaderNickname: currentUser.nickname,
+                    createdAt: new Date().toISOString(),
+                    approved: false,
+                    userInteractions: {
+                        like: document.getElementById('selfLike')?.checked || false,
+                        own:  document.getElementById('selfOwn')?.checked  || false,
+                        want: document.getElementById('selfWant')?.checked  || false
+                    }
+                };
+
+                await savePendingCard(card);
+
+                // Award upload FlipCoin
+                currentUser.flipcoins = (currentUser.flipcoins || 0) + 1;
+                const userInArray = users.find(u => String(u.id) === String(currentUser.id));
+                if (userInArray) userInArray.flipcoins = currentUser.flipcoins;
+                await saveUser(currentUser);
+                document.getElementById('headerFlipcoins').textContent = currentUser.flipcoins;
+                localStorage.setItem('flipsidCurrentUser', JSON.stringify(currentUser));
+
+                alert('Card submitted for review! You earned 1 FlipCoin! 🎉');
+                e.target.reset();
+                frontPreview.innerHTML = 'Front';
+                frontPreview.dataset.imageData = '';
+                backPreview.innerHTML = 'Back';
+                backPreview.dataset.imageData = '';
+                document.getElementById('clubIconDisplay').textContent = '';
+                document.querySelectorAll('.tag-checkbox').forEach(cb => cb.checked = false);
+            } catch(err) {
+                console.error('Upload error:', err);
+                alert('Upload failed, please try again.');
+            } finally {
+                submitBtn.textContent = 'Submit Card for Review';
+                submitBtn.disabled = false;
+            }
+        }
+
+        // ============================================================
+        // BROWSE CARDS
+        // ============================================================
+
+        function loadBrowseCards() {
+            const container = document.getElementById('browseContent');
+            const approved = cards.filter(c => c.approved !== false);
+            if (approved.length === 0) {
+                container.innerHTML = `<div class="empty-state"><div class="empty-state-icon">🎴</div><h3>No cards yet</h3><p>Be the first to upload a card!</p></div>`;
+                return;
+            }
+            container.innerHTML = `<div class="cards-grid">${approved.map(c => renderCard(c)).join('')}</div>`;
+        }
+
+        function applyFilters() {
+            const search   = document.getElementById('searchInput').value.toLowerCase();
+            const clubF    = document.getElementById('filterClub').value;
+            const typeF    = document.getElementById('filterType').value;
+            const actionF  = document.getElementById('filterAction')?.value || 'all';
+
+            let filtered = cards.filter(c => c.approved !== false);
+
+            if (search) filtered = filtered.filter(c =>
+                c.playerName.toLowerCase().includes(search) ||
+                c.team.toLowerCase().includes(search) ||
+                c.company.toLowerCase().includes(search));
+            if (clubF) filtered = filtered.filter(c => c.team === clubF);
+            if (typeF) filtered = filtered.filter(c => c.cardType === typeF);
+
+            if (actionF === 'loved') {
+                filtered = filtered.filter(c => {
+                    const i = cardInteractions[String(c.id)] || cardInteractions[c.id];
+                    return i && i.likes && i.likes.map(String).includes(String(currentUser.id));
+                });
+            } else if (actionF === 'owned') {
+                filtered = filtered.filter(c => {
+                    const i = cardInteractions[String(c.id)] || cardInteractions[c.id];
+                    return i && i.owns && i.owns.map(String).includes(String(currentUser.id));
+                });
+            } else if (actionF === 'wanted') {
+                filtered = filtered.filter(c => {
+                    const i = cardInteractions[String(c.id)] || cardInteractions[c.id];
+                    return i && i.wants && i.wants.map(String).includes(String(currentUser.id));
+                });
+            }
+
+            const container = document.getElementById('browseContent');
+            if (filtered.length === 0) {
+                container.innerHTML = `<div class="empty-state"><div class="empty-state-icon">🔍</div><h3>No cards match</h3><p>Try different filters</p></div>`;
+                return;
+            }
+            container.innerHTML = `<div class="cards-grid">${filtered.map(c => renderCard(c)).join('')}</div>`;
+        }
+
+        function clearFilters() {
+            document.getElementById('searchInput').value = '';
+            document.getElementById('filterClub').value = '';
+            document.getElementById('filterType').value = '';
+            if (document.getElementById('filterAction')) document.getElementById('filterAction').value = 'all';
+            loadBrowseCards();
+        }
+
+
+        // ============================================================
+        // RENDER CARD
+        // ============================================================
+
+        function renderCard(card, showActions = true) {
+            const id  = String(card.id);
+            const ix  = cardInteractions[id] || cardInteractions[card.id] || { likes:[], owns:[], wants:[] };
+            const uid = String(currentUser.id);
+            const liked  = ix.likes  ? ix.likes.map(String).includes(uid)  : false;
+            const owned  = ix.owns   ? ix.owns.map(String).includes(uid)   : false;
+            const wanted = ix.wants  ? ix.wants.map(String).includes(uid)  : false;
+
+            const tagsHtml = card.tags && card.tags.length > 0
+                ? '<div class="tags">' + card.tags.map(t => `<span class="tag ${t.toLowerCase()}">${t}</span>`).join('') + '</div>' : '';
+            const editBtn = currentUser.isAdmin
+                ? `<button class="btn-edit-card" onclick="editApprovedCard(${card.id})">✏️</button>` : '';
+            const uploaderHtml = currentUser.isAdmin && card.uploaderNickname
+                ? `<div class="uploader-badge">⬆️ ${card.uploaderNickname}</div>` : '';
+
+            return `
+                <div class="card-item">
+                    <div class="card-id-badge">#${card.id}</div>
+                    <div class="card-images">
+                        <div class="card-image" onclick="openModal('${card.frontImage || ''}')">
+                            ${card.frontImage ? `<img src="${card.frontImage}" alt="Front">` : `${card.playerName}<br>FRONT`}
+                        </div>
+                        <div class="card-image" onclick="openModal('${card.backImage || ''}')">
+                            ${card.backImage ? `<img src="${card.backImage}" alt="Back">` : `${card.playerName}<br>BACK`}
+                        </div>
+                    </div>
+                    <div class="card-info">
+                        <div class="card-title-row">
+                            <h3>${card.playerName}</h3>
+                            <div class="card-title-actions">
+                                <span class="heart-icon ${liked ? 'liked' : ''}" onclick="toggleLike(${card.id})">
+                                    ${liked ? '❤️' : '🤍'} <span class="heart-count" onclick="event.stopPropagation();showUserList(${card.id},'likes')">${ix.likes ? ix.likes.length : 0}</span>
+                                </span>
+                                ${editBtn}
+                            </div>
+                        </div>
+                        <div class="card-detail"><strong>Team:</strong><span>${card.team} ${card.clubIcon || ''}</span></div>
+                        <div class="card-detail"><strong>Type:</strong><span>${card.cardType}</span></div>
+                        <div class="card-detail"><strong>Company:</strong><span>${card.company}</span></div>
+                        ${tagsHtml}
+                        <div class="interaction-counters">
+                            <div class="interaction-counter owns"  onclick="showUserList(${card.id},'owns')">💪 ${ix.owns  ? ix.owns.length  : 0} owners</div>
+                            <div class="interaction-counter wants" onclick="showUserList(${card.id},'wants')">🤲 ${ix.wants ? ix.wants.length : 0} wanting</div>
+                        </div>
+                        ${uploaderHtml}
+                    </div>
+                    ${showActions ? `
+                    <div class="card-actions">
+                        <button class="btn-small ${owned  ? 'btn-active' : ''}" onclick="toggleOwn(${card.id})"  ${wanted ? 'disabled style="opacity:0.4;"' : ''}>
+                            ${owned  ? '💪 Own ✓' : '💪 Own'}
+                        </button>
+                        <button class="btn-small ${wanted ? 'btn-active' : ''}" onclick="toggleWant(${card.id})" ${owned  ? 'disabled style="opacity:0.4;"' : ''}>
+                            ${wanted ? '🤲 Want ✓' : '🤲 Want'}
+                        </button>
+                    </div>` : ''}
+                </div>`;
+        }
+
+        // ============================================================
+        // INTERACTIONS — Love / Own / Want
+        // ============================================================
+
+        async function toggleLike(cardId) {
+            const id  = String(cardId);
+            const ix  = cardInteractions[id] || cardInteractions[cardId] || { likes:[], owns:[], wants:[] };
+            const uid = String(currentUser.id);
+            if (!ix.likes) ix.likes = [];
+            const idx = ix.likes.map(String).indexOf(uid);
+            if (idx >= 0) ix.likes.splice(idx, 1); else ix.likes.push(uid);
+            await saveInteractions(cardId, ix);
+            loadBrowseCards();
+        }
+
+        async function toggleOwn(cardId) {
+            const id  = String(cardId);
+            const ix  = cardInteractions[id] || cardInteractions[cardId] || { likes:[], owns:[], wants:[] };
+            const uid = String(currentUser.id);
+            if (!ix.owns)  ix.owns  = [];
+            if (!ix.wants) ix.wants = [];
+            if (ix.wants.map(String).includes(uid)) return; // mutually exclusive
+            const idx = ix.owns.map(String).indexOf(uid);
+            if (idx >= 0) ix.owns.splice(idx, 1); else ix.owns.push(uid);
+            await saveInteractions(cardId, ix);
+            loadBrowseCards();
+        }
+
+        async function toggleWant(cardId) {
+            const id  = String(cardId);
+            const ix  = cardInteractions[id] || cardInteractions[cardId] || { likes:[], owns:[], wants:[] };
+            const uid = String(currentUser.id);
+            if (!ix.owns)  ix.owns  = [];
+            if (!ix.wants) ix.wants = [];
+            if (ix.owns.map(String).includes(uid)) return; // mutually exclusive
+            const idx = ix.wants.map(String).indexOf(uid);
+            if (idx >= 0) ix.wants.splice(idx, 1); else ix.wants.push(uid);
+            await saveInteractions(cardId, ix);
+            loadBrowseCards();
+        }
+
+        // ============================================================
+        // YOUR CARDS
+        // ============================================================
+
+        function loadYourCards() {
+            const container = document.getElementById('yourCardsContent');
+            const filter = currentYourCardsFilter || 'all';
+            const uid = String(currentUser.id);
+
+            let myCards = [];
+            if (filter === 'all' || filter === 'uploaded') {
+                const uploaded = cards.filter(c => String(c.uploadedBy) === uid);
+                uploaded.forEach(c => { if (!myCards.find(x => String(x.id) === String(c.id))) myCards.push({...c, _tag:'uploaded'}); });
+            }
+            if (filter === 'all' || filter === 'loved') {
+                cards.filter(c => {
+                    const ix = cardInteractions[String(c.id)] || cardInteractions[c.id] || {};
+                    return ix.likes && ix.likes.map(String).includes(uid);
+                }).forEach(c => { if (!myCards.find(x => String(x.id) === String(c.id))) myCards.push({...c, _tag:'loved'}); });
+            }
+            if (filter === 'all' || filter === 'owned') {
+                cards.filter(c => {
+                    const ix = cardInteractions[String(c.id)] || cardInteractions[c.id] || {};
+                    return ix.owns && ix.owns.map(String).includes(uid);
+                }).forEach(c => { if (!myCards.find(x => String(x.id) === String(c.id))) myCards.push({...c, _tag:'owned'}); });
+            }
+            if (filter === 'all' || filter === 'wanted') {
+                cards.filter(c => {
+                    const ix = cardInteractions[String(c.id)] || cardInteractions[c.id] || {};
+                    return ix.wants && ix.wants.map(String).includes(uid);
+                }).forEach(c => { if (!myCards.find(x => String(x.id) === String(c.id))) myCards.push({...c, _tag:'wanted'}); });
+            }
+
+            if (myCards.length === 0) {
+                container.innerHTML = `<div class="empty-state"><div class="empty-state-icon">💝</div><h3>No cards here yet</h3><p>Upload a card or interact with cards to see them here!</p></div>`;
+                return;
+            }
+            container.innerHTML = `<div class="cards-grid">${myCards.map(c => renderCardWithTags(c)).join('')}</div>`;
+        }
+
+        function filterYourCards(filter) {
+            currentYourCardsFilter = filter;
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            event.target.classList.add('active');
+            loadYourCards();
+        }
+
+        function renderCardWithTags(card) {
+            const ix  = cardInteractions[String(card.id)] || cardInteractions[card.id] || { likes:[], owns:[], wants:[] };
+            const uid = String(currentUser.id);
+            const actionTags = [];
+            if (String(card.uploadedBy) === uid) actionTags.push('<span class="tag" style="background:#ffd93d;color:#333;">⬆️ Uploaded</span>');
+            if (ix.likes  && ix.likes.map(String).includes(uid))  actionTags.push('<span class="tag" style="background:#ff4d4d;color:white;">❤️ Loved</span>');
+            if (ix.owns   && ix.owns.map(String).includes(uid))   actionTags.push('<span class="tag" style="background:#4CAF50;color:white;">💪 Own</span>');
+            if (ix.wants  && ix.wants.map(String).includes(uid))  actionTags.push('<span class="tag" style="background:#2196F3;color:white;">🤲 Want</span>');
+            const actionTagsHtml = actionTags.length > 0 ? `<div class="tags" style="margin-top:8px;">${actionTags.join('')}</div>` : '';
+
+            return `
+                <div class="card-item">
+                    <div class="card-id-badge">#${card.id}</div>
+                    <div class="card-images">
+                        <div class="card-image" onclick="openModal('${card.frontImage || ''}')">
+                            ${card.frontImage ? `<img src="${card.frontImage}" alt="Front">` : `${card.playerName}<br>FRONT`}
+                        </div>
+                        <div class="card-image" onclick="openModal('${card.backImage || ''}')">
+                            ${card.backImage ? `<img src="${card.backImage}" alt="Back">` : `${card.playerName}<br>BACK`}
+                        </div>
+                    </div>
+                    <div class="card-info">
+                        <h3>${card.playerName}</h3>
+                        <div class="card-detail"><strong>Team:</strong><span>${card.team} ${card.clubIcon || ''}</span></div>
+                        <div class="card-detail"><strong>Type:</strong><span>${card.cardType}</span></div>
+                        <div class="card-detail"><strong>Company:</strong><span>${card.company}</span></div>
+                        ${actionTagsHtml}
+                    </div>
+                </div>`;
+        }
+
+        // ============================================================
+        // ADMIN — USERS TAB
+        // ============================================================
+
         function renderAdminUsers() {
             const search = (document.getElementById('userSearchInput')?.value || '').toLowerCase();
             const container = document.getElementById('adminUsersList');
@@ -1826,16 +2406,15 @@
                     if (a.approved && !b.approved) return 1;
                     return a.nickname.localeCompare(b.nickname);
                 });
-            if (filtered.length === 0) {
-                container.innerHTML = '<p style="color:#999; text-align:center; padding:20px;">No users found</p>';
-                return;
-            }
+
+            if (filtered.length === 0) { container.innerHTML = '<p style="color:#999;text-align:center;padding:20px;">No users found</p>'; return; }
+
             container.innerHTML = filtered.map(user => {
                 const isPending = !user.approved;
                 return `
                 <div class="admin-user-row ${isPending ? 'pending-highlight' : ''}">
                     <div class="admin-user-info">
-                        <div style="display:flex; align-items:center; gap:10px;">
+                        <div style="display:flex;align-items:center;gap:10px;">
                             ${user.profilePic ? `<img src="${user.profilePic}" style="width:45px;height:45px;border-radius:50%;object-fit:cover;border:2px solid #ffd93d;">` : `<div class="user-avatar" style="width:45px;height:45px;font-size:1.2em;">${user.nickname.charAt(0).toUpperCase()}</div>`}
                             <div>
                                 <div style="font-weight:bold;font-size:1.05em;">
@@ -1848,113 +2427,146 @@
                         </div>
                     </div>
                     <div class="admin-user-actions">
-                        ${isPending ? `<button class="btn-approve" onclick="approveUserAndRefresh(${user.id})">✓ Approve</button>` : ''}
-                        ${isPending ? `<button class="btn-reject" onclick="rejectUserAndRefresh(${user.id})">✗ Reject</button>` : ''}
-                        ${!isPending ? `<button class="btn-edit" onclick="openEditUserModal(${user.id})">✏️ Edit</button>` : ''}
-                        ${!isPending ? `<button class="btn-small" onclick="openResetPasswordModal(${user.id})" style="background:#9C27B0;color:white;">🔑 Reset</button>` : ''}
+                        ${isPending  ? `<button class="btn-approve" onclick="approveUserAdmin(${user.id})">✓ Approve</button>` : ''}
+                        ${isPending  ? `<button class="btn-reject"  onclick="rejectUserAdmin(${user.id})">✗ Reject</button>`  : ''}
+                        ${!isPending ? `<button class="btn-edit"    onclick="openEditUserModal(${user.id})">✏️ Edit</button>`  : ''}
+                        ${!isPending ? `<button class="btn-small"   onclick="openResetPasswordModal(${user.id})" style="background:#9C27B0;color:white;">🔑 Reset</button>` : ''}
                         ${!isPending && !user.isAdmin && currentUser.isSuperAdmin ? `<button class="btn-small" onclick="makeAdmin(${user.id})" style="background:#ff4444;color:white;">⭐ Make Admin</button>` : ''}
-                        ${!isPending && user.isAdmin && !user.isSuperAdmin && currentUser.isSuperAdmin ? `<button class="btn-small btn-secondary" onclick="removeAdminAndRefresh(${user.id})">Remove Admin</button>` : ''}
+                        ${!isPending && user.isAdmin && !user.isSuperAdmin && currentUser.isSuperAdmin ? `<button class="btn-small btn-secondary" onclick="removeAdminRole(${user.id})">Remove Admin</button>` : ''}
                     </div>
                 </div>`;
             }).join('');
         }
 
-        function approveUserAndRefresh(userId) {
-            const user = users.find(u => u.id === userId);
+        async function approveUserAdmin(userId) {
+            const user = users.find(u => String(u.id) === String(userId));
             if (!user) return;
             user.approved = true;
-            saveData('flipsidUsers', users);
+            await saveUser(user);
             renderAdminUsers();
         }
 
-        function rejectUserAndRefresh(userId) {
+        async function rejectUserAdmin(userId) {
             if (!confirm('Reject and delete this user?')) return;
-            users = users.filter(u => u.id !== userId);
-            saveData('flipsidUsers', users);
+            users = users.filter(u => String(u.id) !== String(userId));
+            if (!useFirebase) { localStorage.setItem('flipsidUsers', JSON.stringify(users)); renderAdminUsers(); return; }
+            try { await db.collection('users').doc(String(userId)).delete(); }
+            catch(e) { console.log('rejectUser error:', e); }
             renderAdminUsers();
         }
 
-        function makeAdmin(userId) {
+        async function makeAdmin(userId) {
             if (!confirm('Make this user an admin?')) return;
-            const user = users.find(u => u.id === userId);
+            const user = users.find(u => String(u.id) === String(userId));
             if (!user) return;
             user.isAdmin = true;
-            saveData('flipsidUsers', users);
+            await saveUser(user);
             renderAdminUsers();
         }
 
-        function removeAdminAndRefresh(userId) {
+        async function removeAdminRole(userId) {
             if (!confirm('Remove admin privileges?')) return;
-            const user = users.find(u => u.id === userId);
+            const user = users.find(u => String(u.id) === String(userId));
             if (!user) return;
             user.isAdmin = false;
-            saveData('flipsidUsers', users);
+            await saveUser(user);
             renderAdminUsers();
             loadAdminsList();
         }
 
         function openEditUserModal(userId) {
-            const user = users.find(u => u.id === userId);
+            const user = users.find(u => String(u.id) === String(userId));
             if (!user) return;
             document.getElementById('editUserModalNickname').value = user.nickname;
-            document.getElementById('editUserModalFullName').value = user.fullName;
+            document.getElementById('editUserModalFullName').value = user.fullName || '';
+            document.getElementById('editUserModalMobile').value   = user.mobile || '';
             document.getElementById('editUserModalId').value = userId;
+            
+            if (user.profilePic) {
+                document.getElementById('editUserModalPic').src = user.profilePic;
+                document.getElementById('editUserModalPic').style.display = 'block';
+                document.getElementById('editUserModalPicPlaceholder').style.display = 'none';
+            } else {
+                document.getElementById('editUserModalPic').style.display = 'none';
+                document.getElementById('editUserModalPicPlaceholder').style.display = 'flex';
+                document.getElementById('editUserModalPicPlaceholder').textContent = user.nickname.charAt(0).toUpperCase();
+            }
+            
             document.getElementById('editUserModal').classList.add('active');
         }
 
-        function saveEditedUser() {
-            const userId = parseInt(document.getElementById('editUserModalId').value);
-            const user = users.find(u => u.id === userId);
+        async function saveEditedUser() {
+            const userId      = document.getElementById('editUserModalId').value;
+            const user        = users.find(u => String(u.id) === String(userId));
             if (!user) return;
+            
             const newNickname = document.getElementById('editUserModalNickname').value.trim();
             const newFullName = document.getElementById('editUserModalFullName').value.trim();
+            const newMobile   = document.getElementById('editUserModalMobile').value.trim();
+            const picInput    = document.getElementById('editUserModalPicInput');
+            
             if (!newNickname) { alert('Nickname cannot be empty'); return; }
-            if (users.find(u => u.nickname === newNickname && u.id !== userId)) { alert('Nickname already taken!'); return; }
-            user.nickname = newNickname;
-            user.fullName = newFullName;
-            saveData('flipsidUsers', users);
+            if (users.find(u => u.nickname === newNickname && String(u.id) !== String(userId))) { alert('Nickname already taken!'); return; }
+            
+            user.nickname  = newNickname;
+            user.fullName  = newFullName;
+            user.mobile    = newMobile;
+            
+            if (picInput && picInput.files[0]) {
+                const reader = new FileReader();
+                reader.onload = async (ev) => {
+                    user.profilePic = await compressImage(ev.target.result);
+                    await saveUser(user);
+                    document.getElementById('editUserModal').classList.remove('active');
+                    renderAdminUsers();
+                };
+                reader.readAsDataURL(picInput.files[0]);
+                return;
+            }
+            
+            await saveUser(user);
             document.getElementById('editUserModal').classList.remove('active');
             renderAdminUsers();
         }
 
         function openResetPasswordModal(userId) {
-            const user = users.find(u => u.id === userId);
+            const user = users.find(u => String(u.id) === String(userId));
             if (!user) return;
-            document.getElementById('resetPasswordUserId').value = userId;
+            document.getElementById('resetPasswordUserId').value    = userId;
             document.getElementById('resetPasswordUsername').textContent = user.nickname;
-            document.getElementById('resetPasswordInput').value = '';
+            document.getElementById('resetPasswordInput').value     = '';
             document.getElementById('resetPasswordResult').innerHTML = '';
             document.getElementById('resetPasswordModal').classList.add('active');
         }
 
-        function saveResetPassword() {
-            const userId = parseInt(document.getElementById('resetPasswordUserId').value);
+        async function saveResetPassword() {
+            const userId     = document.getElementById('resetPasswordUserId').value;
             const newPassword = document.getElementById('resetPasswordInput').value.trim();
             if (!newPassword || newPassword.length < 4) { alert('Password must be at least 4 characters'); return; }
-            const user = users.find(u => u.id === userId);
+            const user = users.find(u => String(u.id) === String(userId));
             if (!user) return;
             user.password = newPassword;
-            saveData('flipsidUsers', users);
+            await saveUser(user);
             document.getElementById('resetPasswordResult').innerHTML = `
                 <div style="background:#e8f5e9;padding:12px;border-radius:8px;border:2px solid #4CAF50;margin-top:10px;text-align:center;">
-                    ✅ Password reset! Tell <strong>${user.nickname}</strong> their new password is: 
-                    <strong style="color:#ff4444;font-size:1.1em;">${newPassword}</strong>
+                    ✅ Done! Tell <strong>${user.nickname}</strong> their new password: <strong style="color:#ff4444;">${newPassword}</strong>
                 </div>`;
         }
 
-        // ── ADMIN CARDS TAB ──────────────────────────────────────────
+        // ============================================================
+        // ADMIN — CARDS TAB
+        // ============================================================
+
         function renderAdminCards() {
             const search = (document.getElementById('cardSearchInput')?.value || '').toLowerCase();
             const container = document.getElementById('adminCardsList');
             const allCards = [
                 ...pendingCards.map(c => ({...c, _isPending: true})),
-                ...cards.filter(c => c.approved)
+                ...cards.filter(c => c.approved !== false)
             ].filter(c => !search || c.playerName.toLowerCase().includes(search) || c.team.toLowerCase().includes(search));
 
-            if (allCards.length === 0) {
-                container.innerHTML = '<p style="color:#999;text-align:center;padding:20px;">No cards found</p>';
-                return;
-            }
+            if (allCards.length === 0) { container.innerHTML = '<p style="color:#999;text-align:center;padding:20px;">No cards found</p>'; return; }
+
             container.innerHTML = allCards.map(card => `
                 <div class="admin-card-row ${card._isPending ? 'pending-highlight' : ''}">
                     <div style="display:flex;gap:8px;flex-shrink:0;">
@@ -1971,1421 +2583,36 @@
                             ${card._isPending ? '<span style="background:#FF9800;color:white;padding:2px 8px;border-radius:10px;font-size:0.75em;margin-left:6px;">⏳ Pending</span>' : ''}
                         </div>
                         <div style="color:#999;font-size:0.85em;margin-top:3px;">${card.team} ${card.clubIcon || ''} · ${card.cardType} · ${card.company}</div>
-                        <div style="color:#bbb;font-size:0.8em;">⬆️ ${card.uploaderNickname || 'flipsid'} · #${card.id}</div>
+                        <div style="color:#bbb;font-size:0.8em;">⬆️ ${card.uploaderNickname || 'unknown'} · #${card.id}</div>
                         ${card.tags && card.tags.length > 0 ? `<div class="tags" style="margin-top:4px;">${card.tags.map(t => `<span class="tag">${t}</span>`).join('')}</div>` : ''}
                     </div>
                     <div class="admin-user-actions">
-                        ${card._isPending ? `<button class="btn-approve" onclick="approveCard(${card.id}); renderAdminCards();">✓ Approve</button>` : ''}
-                        ${card._isPending ? `<button class="btn-reject" onclick="rejectCard(${card.id}); renderAdminCards();">✗ Reject</button>` : ''}
-                        <button class="btn-edit" onclick="${card._isPending ? `openEditModal(${card.id})` : `editApprovedCard(${card.id})`}">✏️ Edit</button>
+                        ${card._isPending ? `<button class="btn-approve" onclick="approveCard(${card.id})">✓ Approve</button>` : ''}
+                        ${card._isPending ? `<button class="btn-reject"  onclick="rejectCard(${card.id})">✗ Reject</button>`   : ''}
+                        <button class="btn-edit" onclick="openEditCardModal(${card.id}, ${card._isPending || false})">✏️ Edit</button>
                         ${!card._isPending ? `<button class="btn-reject" onclick="deleteCard(${card.id})">🗑️ Delete</button>` : ''}
                     </div>
-                </div>
-            `).join('');
+                </div>`).join('');
         }
 
-        function deleteCard(cardId) {
-            if (!confirm('Permanently delete this card?')) return;
-            cards = cards.filter(c => c.id !== cardId);
-            delete cardInteractions[cardId];
-            saveData('flipsidCards', cards);
-            saveData('flipsidCardInteractions', cardInteractions);
-            renderAdminCards();
-            loadBrowseCards();
-        }
-
-        function login(e) {
-            e.preventDefault();
-            const nickname = document.getElementById('loginNickname').value;
-            const password = document.getElementById('loginPassword').value;
-
-            const user = users.find(u => u.nickname === nickname && u.password === password);
-
-            if (user) {
-                if (!user.approved) {
-                    currentUser = user;
-                    localStorage.setItem('flipsidCurrentUser', JSON.stringify(user));
-                    showPendingApproval();
-                    return;
-                }
-                currentUser = user;
-                localStorage.setItem('flipsidCurrentUser', JSON.stringify(user));
-                showDashboard();
-            } else {
-                alert('Invalid credentials. Please try again.');
-            }
-        }
-
-        function signup(e) {
-            e.preventDefault();
-            const fullName = document.getElementById('signupFullName').value;
-            const nickname = document.getElementById('signupNickname').value;
-            const phone = document.getElementById('signupPhone').value;
-            const password = document.getElementById('signupPassword').value;
-            const profilePicFile = document.getElementById('signupProfilePic').files[0];
-
-            if (users.find(u => u.phone === phone)) {
-                alert('Mobile number already registered!');
-                return;
-            }
-
-            if (users.find(u => u.nickname === nickname)) {
-                alert('Nickname already taken! Please choose another one.');
-                return;
-            }
-
-            const newUser = {
-                id: Date.now(),
-                fullName,
-                nickname,
-                phone,
-                password,
-                isAdmin: false,
-                isSuperAdmin: false,
-                approved: false,
-                flipcoins: 0,
-                profilePic: null
-            };
-
-            if (profilePicFile) {
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    newUser.profilePic = e.target.result;
-                    users.push(newUser);
-                    saveData('flipsidUsers', users);
-                    currentUser = newUser;
-                    localStorage.setItem('flipsidCurrentUser', JSON.stringify(newUser));
-                    showPendingApproval();
-                };
-                reader.readAsDataURL(profilePicFile);
-            } else {
-                users.push(newUser);
-                saveData('flipsidUsers', users);
-                currentUser = newUser;
-                localStorage.setItem('flipsidCurrentUser', JSON.stringify(newUser));
-                showPendingApproval();
-            }
-        }
-
-        function logout() {
-            currentUser = null;
-            localStorage.removeItem('flipsidCurrentUser');
-            document.getElementById('userSection').classList.add('hidden');
-            document.getElementById('authButtons').classList.remove('hidden');
-            showLogin();
-        }
-
-        function switchTab(tab) {
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            event.target.classList.add('active');
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-            
-            if (tab === 'browse') {
-                document.getElementById('browseTab').classList.add('active');
-                loadBrowseCards();
-            } else if (tab === 'upload') {
-                document.getElementById('uploadTab').classList.add('active');
-            } else if (tab === 'yourCards') {
-                document.getElementById('yourCardsTab').classList.add('active');
-                loadYourCards();
-            } else if (tab === 'friends') {
-                document.getElementById('friendsTab').classList.add('active');
-                loadFriends();
-            }
-        }
-
-        function previewImage(input, previewId) {
-            const preview = document.getElementById(previewId);
-            preview.innerHTML = '';
-            
-            if (input.files && input.files[0]) {
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    const container = document.createElement('div');
-                    container.className = 'preview-container';
-                    
-                    const img = document.createElement('img');
-                    img.src = e.target.result;
-                    img.className = 'image-preview';
-                    
-                    const removeBtn = document.createElement('button');
-                    removeBtn.className = 'remove-image';
-                    removeBtn.textContent = '×';
-                    removeBtn.type = 'button';
-                    removeBtn.onclick = function() {
-                        input.value = '';
-                        preview.innerHTML = '';
-                    };
-                    
-                    container.appendChild(img);
-                    container.appendChild(removeBtn);
-                    preview.appendChild(container);
-                };
-                reader.readAsDataURL(input.files[0]);
-            }
-        }
-
-        function uploadCard(e) {
-            e.preventDefault();
-            
-            const frontImage = document.getElementById('uploadFrontImage').files[0];
-            const backImage = document.getElementById('uploadBackImage').files[0];
-            
-            if (!frontImage || !backImage) {
-                alert('Please upload both front and back images');
-                return;
-            }
-
-            const tagsInput = document.getElementById('uploadTags').value;
-            const tags = tagsInput ? tagsInput.split(',').map(t => t.trim()).filter(t => t) : [];
-
-            const card = {
-                id: Date.now(),
-                playerName: document.getElementById('uploadPlayerName').value,
-                team: document.getElementById('uploadPlayerTeam').value,
-                clubIcon: document.getElementById('uploadClubIcon').value,
-                cardType: document.getElementById('uploadCardType').value,
-                company: document.getElementById('uploadCardCompany').value,
-                sport: "Football",
-                tags: tags,
-                frontImage: null,
-                backImage: null,
-                uploadedBy: currentUser.id,
-                uploaderNickname: currentUser.nickname,
-                createdAt: new Date().toISOString(),
-                approved: false,
-                userInteractions: {
-                    like: document.getElementById('uploadLike').checked,
-                    own: document.getElementById('uploadOwn').checked,
-                    want: document.getElementById("uploadWant").checked
-                }
-            };
-
-            const frontReader = new FileReader();
-            const backReader = new FileReader();
-            
-            frontReader.onload = function(e) {
-                card.frontImage = e.target.result;
-                
-                backReader.onload = function(e) {
-                    card.backImage = e.target.result;
-                    
-                    pendingCards.push(card);
-                    saveData('flipsidPendingCards', pendingCards);
-                    
-                    // Reset form
-                    document.querySelector('#uploadTab form').reset();
-                    document.getElementById('uploadFrontPreview').innerHTML = '';
-                    document.getElementById('uploadBackPreview').innerHTML = '';
-                    
-                    alert('Card submitted for approval! You\'ll earn 1 FlipCoin once approved. 🎉');
-                    switchTab('browse');
-                };
-                backReader.readAsDataURL(backImage);
-            };
-            frontReader.readAsDataURL(frontImage);
-        }
-
-        function loadBrowseCards() {
-            const container = document.getElementById('browseCardsList');
-            const approvedCards = cards.filter(c => c.approved !== false);
-            
-            if (approvedCards.length === 0) {
-                container.innerHTML = `
-                    <div class="empty-state">
-                        <div class="empty-state-icon">📦</div>
-                        <h3>No Cards Available</h3>
-                        <p>Cards will appear here once added</p>
-                    </div>
-                `;
-                return;
-            }
-
-            const sortedCards = [...approvedCards].sort((a, b) => 
-                getCardLikes(b.id) - getCardLikes(a.id)
-            );
-
-            container.innerHTML = sortedCards.map(card => renderCard(card, true)).join('');
-        }
-
-        function loadYourCards() {
-            const container = document.getElementById('yourCardsContent');
-            
-            const likedCards = cards.filter(card => {
-                const interactions = cardInteractions[card.id];
-                return interactions && interactions.likes.includes(currentUser.id);
-            });
-            
-            const ownedCards = cards.filter(card => {
-                const interactions = cardInteractions[card.id];
-                return interactions && interactions.owns.includes(currentUser.id);
-            });
-            
-            const wantToBuyCards = cards.filter(card => {
-                const interactions = cardInteractions[card.id];
-                return interactions && interactions.wants.includes(currentUser.id);
-            });
-            
-            const wantToSellCards = cards.filter(card => {
-                const interactions = cardInteractions[card.id];
-                return interactions && interactions.wants.includes(currentUser.id);
-            });
-
-            const uploadedCards = cards.filter(card => card.uploadedBy === currentUser.id);
-            
-            let html = '';
-            
-            html += `<div class="stats-badge">📤 Cards Uploaded: ${uploadedCards.length} | 💰 FlipCoins: ${currentUser.flipcoins || 0}</div>`;
-
-            if (uploadedCards.length > 0) {
-                html += '<div class="section-header">📤 Cards I Uploaded (' + uploadedCards.length + ')</div>';
-                html += '<div class="cards-grid">' + uploadedCards.map(c => renderCard(c, false)).join('') + '</div>';
-            }
-            
-            if (likedCards.length > 0) {
-                html += '<div class="section-header">❤️ Liked Cards (' + likedCards.length + ')</div>';
-                html += '<div class="cards-grid">' + likedCards.map(c => renderCard(c, false)).join('') + '</div>';
-            }
-            
-            if (ownedCards.length > 0) {
-                html += '<div class="section-header">✓ Cards I Own (' + ownedCards.length + ')</div>';
-                html += '<div class="cards-grid">' + ownedCards.map(c => renderCard(c, false)).join('') + '</div>';
-            }
-            
-            if (wantToBuyCards.length > 0) {
-                html += '<div class="section-header">🛒 Want to Buy (' + wantToBuyCards.length + ')</div>';
-                html += '<div class="cards-grid">' + wantToBuyCards.map(c => renderCard(c, false)).join('') + '</div>';
-            }
-            
-            if (wantToSellCards.length > 0) {
-                html += '<div class="section-header">🤲 Want (' + wantToSellCards.length + ')</div>';
-                html += '<div class="cards-grid">' + wantToSellCards.map(c => renderCard(c, false)).join('') + '</div>';
-            }
-            
-            if (html === `<div class="stats-badge">📤 Cards Uploaded: 0 | 💰 FlipCoins: ${currentUser.flipcoins || 0}</div>`) {
-                html += `
-                    <div class="empty-state">
-                        <div class="empty-state-icon">💝</div>
-                        <h3>No Cards Yet</h3>
-                        <p>Start uploading, liking, or marking cards!</p>
-                    </div>
-                `;
-            }
-            
-            container.innerHTML = html;
-        }
-
-        function renderCard(card, showActions = true) {
-            const interactions = cardInteractions[card.id] || {likes: [], owns: [], wants: []};
-            const userLiked = interactions.likes.includes(currentUser.id);
-            const userOwns = interactions.owns.includes(currentUser.id);
-            const userWantsToBuy = interactions.wants.includes(currentUser.id);
-            const userWantsToSell = interactions.wants.includes(currentUser.id);
-
-            const tagsHtml = card.tags && card.tags.length > 0 ? 
-                '<div class="tags">' + card.tags.map(tag => `<span class="tag ${tag.toLowerCase()}">${tag}</span>`).join('') + '</div>' : '';
-
-            const editButtonHtml = currentUser.isAdmin ? `<button class="btn-edit-card" onclick="editApprovedCard(${card.id})">✏️ Edit</button>` : '';
-
-            return `
-                <div class="card-item">
-                    <span class="sport-badge">${card.sport}</span>
-                    <div class="card-images">
-                        <div class="card-image" onclick="openModal('${card.frontImage || ''}')">
-                            ${card.frontImage ? `<img src="${card.frontImage}" alt="Front">` : `${card.playerName}<br>FRONT`}
-                        </div>
-                        <div class="card-image" onclick="openModal('${card.backImage || ''}')">
-                            ${card.backImage ? `<img src="${card.backImage}" alt="Back">` : `${card.playerName}<br>BACK`}
-                        </div>
-                    </div>
-                    <div class="card-info">
-                        <h3>${card.playerName} ${editButtonHtml}</h3>
-                        <div class="card-detail">
-                            <strong>Team:</strong>
-                            <span>${card.team} ${card.clubIcon || ''}</span>
-                        </div>
-                        <div class="card-detail">
-                            <strong>Type:</strong>
-                            <span>${card.cardType}</span>
-                        </div>
-                        <div class="card-detail">
-                            <strong>Company:</strong>
-                            <span>${card.company}</span>
-                        </div>
-                        ${tagsHtml}
-                        <div class="interaction-counters">
-                            <div class="interaction-counter likes" onclick="showUserList(${card.id}, 'likes')">
-                                ❤️ ${interactions.likes.length}
-                            </div>
-                            <div class="interaction-counter owns" onclick="showUserList(${card.id}, 'owns')">
-                                ✓ ${interactions.owns.length}
-                            </div>
-                            <div class="interaction-counter wantsToBuy" onclick="showUserList(${card.id}, 'wantsToBuy')">
-                                🛒 ${interactions.wants.length}
-                            </div>
-                            <div class="interaction-counter wantsToSell" onclick="showUserList(${card.id}, 'wantsToSell')">
-                                💰 ${interactions.wants.length}
-                            </div>
-                        </div>
-                        ${card.uploadedBy && card.uploaderNickname ? `<div class="uploader-badge">Uploaded by: ${card.uploaderNickname}</div>` : ''}
-                    </div>
-                    ${showActions ? `
-                        <div class="card-actions">
-                            <button class="btn-small btn-icon ${userLiked ? 'btn-active' : ''}" onclick="toggleLike(${card.id})">
-                                ${userLiked ? '❤️' : '🤍'}
-                            </button>
-                            <button class="btn-small ${userOwns ? 'btn-active' : ''}" onclick="toggleOwn(${card.id})">
-                                ${userOwns ? '✓ Own' : 'Own'}
-                            </button>
-                            <button class="btn-small ${userWantsToBuy ? 'btn-active' : ''}" onclick="toggleWantToBuy(${card.id})">
-                                ${userWantsToBuy ? '✓ Want' : 'Want to Buy'}
-                            </button>
-                            <button class="btn-small ${userWantsToSell ? 'btn-active' : ''}" onclick="toggleWantToSell(${card.id})">
-                                ${userWantsToSell ? '✓ Sell' : 'Want'}
-                            </button>
-                        </div>
-                    ` : ''}
-                </div>
-            `;
-        }
-
-        function getCardLikes(cardId) {
-            const interactions = cardInteractions[cardId];
-            return interactions ? interactions.likes.length : 0;
-        }
-
-        function toggleLike(cardId) {
-            if (!cardInteractions[cardId]) {
-                cardInteractions[cardId] = {likes: [], owns: [], wantsToBuy: [], wantsToSell: []};
-            }
-
-            const likes = cardInteractions[cardId].likes;
-            const index = likes.indexOf(currentUser.id);
-            
-            if (index > -1) {
-                likes.splice(index, 1);
-            } else {
-                likes.push(currentUser.id);
-            }
-
-            saveData('flipsidCardInteractions', cardInteractions);
-            loadBrowseCards();
-        }
-
-        function toggleOwn(cardId) {
-            if (!cardInteractions[cardId]) {
-                cardInteractions[cardId] = {likes: [], owns: [], wants: []};
-            }
-
-            const owns = cardInteractions[cardId].owns;
-            const wants = cardInteractions[cardId].wants;
-            const index = owns.indexOf(currentUser.id);
-            
-            if (index > -1) {
-                // Remove from owns
-                owns.splice(index, 1);
-            } else {
-                // Add to owns and remove from wants (mutual exclusivity)
-                owns.push(currentUser.id);
-                const wantIndex = wants.indexOf(currentUser.id);
-                if (wantIndex > -1) {
-                    wants.splice(wantIndex, 1);
-                }
-            }
-
-            saveData('flipsidCardInteractions', cardInteractions);
-            loadBrowseCards();
-        }
-
-        function toggleWant(cardId) {
-            if (!cardInteractions[cardId]) {
-                cardInteractions[cardId] = {likes: [], owns: [], wants: []};
-            }
-
-            const wants = cardInteractions[cardId].wants;
-            const owns = cardInteractions[cardId].owns;
-            const index = wants.indexOf(currentUser.id);
-            
-            if (index > -1) {
-                // Remove from wants
-                wants.splice(index, 1);
-            } else {
-                // Add to wants and remove from owns (mutual exclusivity)
-                wants.push(currentUser.id);
-                const ownIndex = owns.indexOf(currentUser.id);
-                if (ownIndex > -1) {
-                    owns.splice(ownIndex, 1);
-                }
-            }
-
-            saveData('flipsidCardInteractions', cardInteractions);
-            loadBrowseCards();
-        }
-
-        function handleOwnWantToggle(type) {
-            if (type === 'own' && document.getElementById('uploadOwn').checked) {
-                document.getElementById('uploadWant').checked = false;
-            } else if (type === 'want' && document.getElementById('uploadWant').checked) {
-                document.getElementById('uploadOwn').checked = false;
-            }
-        }
-
-        function loadPendingUsers() {
-            const pendingUsers = users.filter(u => !u.approved && !u.isAdmin);
-            const container = document.getElementById('pendingUsersList');
-
-            if (pendingUsers.length === 0) {
-                container.innerHTML = '<p style="color: #666; text-align: center;">No pending approvals</p>';
-                return;
-            }
-
-            container.innerHTML = pendingUsers.map(user => `
-                <div class="pending-user">
-                    <div class="pending-user-info">
-                        <strong>${user.nickname}</strong>
-                        <p>Full Name: ${user.fullName}</p>
-                        <p>Phone: ${user.phone}</p>
-                    </div>
-                    <div class="pending-user-actions">
-                        <button class="btn-approve" onclick="approveUser(${user.id})">✓ Approve</button>
-                        <button class="btn-reject" onclick="rejectUser(${user.id})">✗ Reject</button>
-                    </div>
-                </div>
-            `).join('');
-        }
-
-        function loadPendingCards() {
-            const container = document.getElementById('pendingCardsList');
-
-            if (pendingCards.length === 0) {
-                container.innerHTML = '<p style="color: #666; text-align: center;">No pending card approvals</p>';
-                return;
-            }
-
-            container.innerHTML = pendingCards.map(card => `
-                <div class="pending-card">
-                    <div>
-                        <div style="display: flex; gap: 10px; margin-bottom: 10px;">
-                            <div class="card-image" style="width: 90px; height: 120px; font-size: 0.7em;">
-                                ${card.frontImage ? `<img src="${card.frontImage}" alt="Front">` : 'FRONT'}
-                            </div>
-                            <div class="card-image" style="width: 90px; height: 120px; font-size: 0.7em;">
-                                ${card.backImage ? `<img src="${card.backImage}" alt="Back">` : 'BACK'}
-                            </div>
-                        </div>
-                    </div>
-                    <div class="pending-card-info">
-                        <strong>${card.playerName}</strong>
-                        <p>Team: ${card.team} ${card.clubIcon || ''}</p>
-                        <p>Type: ${card.cardType} | Company: ${card.company}</p>
-                        <p>Sport: ${card.sport}</p>
-                        <p>Tags: ${card.tags.join(', ') || 'None'}</p>
-                        <p style="color: #ffaf00;">Uploaded by: ${card.uploaderNickname}</p>
-                    </div>
-                    <div class="pending-card-actions">
-                        <button class="btn-edit" onclick="openEditModal(${card.id})">✏️ Edit</button>
-                        <button class="btn-approve" onclick="approveCard(${card.id})">✓ Approve</button>
-                        <button class="btn-reject" onclick="rejectCard(${card.id})">✗ Reject</button>
-                    </div>
-                </div>
-            `).join('');
-        }
-
-        function approveUser(userId) {
-            const user = users.find(u => u.id === userId);
-            if (user) {
-                user.approved = true;
-                saveData('flipsidUsers', users);
-                loadPendingUsers();
-                alert(`${user.nickname} has been approved!`);
-            }
-        }
-
-        function rejectUser(userId) {
-            if (confirm('Are you sure you want to reject this user?')) {
-                users = users.filter(u => u.id !== userId);
-                saveData('flipsidUsers', users);
-                loadPendingUsers();
-            }
-        }
-
-        function openEditModal(cardId) {
-            const card = pendingCards.find(c => c.id === cardId);
-            if (!card) return;
-
-            document.getElementById('editCardId').value = cardId;
-            document.getElementById('editPlayerName').value = card.playerName;
-            document.getElementById('editPlayerTeam').value = card.team;
-            document.getElementById('editCardType').value = card.cardType;
-            document.getElementById('editCardCompany').value = card.company;
-            document.getElementById('editClubIcon').value = card.clubIcon || '';
-            document.getElementById('editTags').value = card.tags.join(', ');
-
-            document.getElementById('editModal').classList.add('active');
-        }
-
-        function closeEditModal() {
-            document.getElementById('editModal').classList.remove('active');
-        }
-
-        function saveEditedCard() {
-            const cardId = parseInt(document.getElementById('editCardId').value);
-            const cardIndex = pendingCards.findIndex(c => c.id === cardId);
-            
-            if (cardIndex === -1) return;
-
-            const card = pendingCards[cardIndex];
-            card.playerName = document.getElementById('editPlayerName').value;
-            card.team = document.getElementById('editPlayerTeam').value;
-            card.cardType = document.getElementById('editCardType').value;
-            card.company = document.getElementById('editCardCompany').value;
-            card.clubIcon = document.getElementById('editClubIcon').value;
-            
-            const tagsInput = document.getElementById('editTags').value;
-            card.tags = tagsInput ? tagsInput.split(',').map(t => t.trim()).filter(t => t) : [];
-
-            approveCard(cardId);
-            closeEditModal();
-        }
-
-        function rejectCard(cardId) {
-            if (confirm('Are you sure you want to reject this card?')) {
-                pendingCards = pendingCards.filter(c => c.id !== cardId);
-                saveData('flipsidPendingCards', pendingCards);
-                loadPendingCards();
-            }
-        }
-
-        function openModal(imageSrc) {
-            if (!imageSrc) return;
-            const modal = document.getElementById('imageModal');
-            const modalImg = document.getElementById('modalImage');
-            modal.classList.add('active');
-            modalImg.src = imageSrc;
-        }
-
-        function closeModal() {
-            document.getElementById('imageModal').classList.remove('active');
-        }
-
-        // Edit approved card (admin only)
-        function editApprovedCard(cardId) {
-            if (!currentUser.isAdmin) {
-                alert('Only admin can edit cards');
-                return;
-            }
-
-            const card = cards.find(c => c.id === cardId);
-            if (!card) return;
-
-            document.getElementById('editCardId').value = cardId;
-            document.getElementById('editPlayerName').value = card.playerName;
-            document.getElementById('editPlayerTeam').value = card.team;
-            document.getElementById('editCardType').value = card.cardType;
-            document.getElementById('editCardCompany').value = card.company;
-            document.getElementById('editClubIcon').value = card.clubIcon || '';
-            document.getElementById('editTags').value = card.tags.join(', ');
-
-            document.getElementById('editModal').classList.add('active');
-        }
-
-        function saveEditedCard() {
-            const cardId = parseInt(document.getElementById('editCardId').value);
-            
-            // Check if editing pending card or approved card
-            let card = pendingCards.find(c => c.id === cardId);
-            let isPending = true;
-            
-            if (!card) {
-                card = cards.find(c => c.id === cardId);
-                isPending = false;
-            }
-            
-            if (!card) return;
-
-            card.playerName = document.getElementById('editPlayerName').value;
-            card.team = document.getElementById('editPlayerTeam').value;
-            card.cardType = document.getElementById('editCardType').value;
-            card.company = document.getElementById('editCardCompany').value;
-            card.clubIcon = document.getElementById('editClubIcon').value;
-            
-            const tagsInput = document.getElementById('editTags').value;
-            card.tags = tagsInput ? tagsInput.split(',').map(t => t.trim()).filter(t => t) : [];
-
-            if (isPending) {
-                saveData('flipsidPendingCards', pendingCards);
-                approveCard(cardId);
-            } else {
-                saveData('flipsidCards', cards);
-                loadBrowseCards();
-                alert('Card updated successfully!');
-            }
-
-            closeEditModal();
-        }
-
-        // Show user list modal
-        function showUserList(cardId, interactionType) {
-            const interactions = cardInteractions[cardId];
-            if (!interactions) return;
-
-            let userIds = [];
-            let title = '';
-
-            if (interactionType === 'likes') {
-                userIds = interactions.likes;
-                title = '❤️ Loved by';
-            } else if (interactionType === 'owns') {
-                userIds = interactions.owns;
-                title = '💪 Owned by';
-            } else if (interactionType === 'wants') {
-                userIds = interactions.wants;
-                title = '🤲 Wanted by';
-            }
-
-            if (userIds.length === 0) {
-                alert('No users yet!');
-                return;
-            }
-
-            document.getElementById('userListTitle').textContent = title;
-            
-            const html = userIds.map(userId => {
-                const user = users.find(u => u.id === userId);
-                if (!user) return '';
-                
-                const isFollowing = follows[currentUser.id] && follows[currentUser.id].includes(userId);
-                const isSelf = userId === currentUser.id;
-                
-                return `
-                    <div class="user-list-item">
-                        <div>
-                            <strong>${user.nickname}</strong>
-                            ${user.flipcoins ? `<div style="color: #999; font-size: 0.9em;">💰 ${user.flipcoins} FlipCoins</div>` : ''}
-                        </div>
-                        ${!isSelf ? `
-                            <button class="follow-btn ${isFollowing ? 'following' : ''}" onclick="toggleFollow(${userId})">
-                                ${isFollowing ? '✓ Following' : '+ Follow'}
-                            </button>
-                        ` : ''}
-                    </div>
-                `;
-            }).join('');
-
-            document.getElementById('userListContent').innerHTML = html;
-            document.getElementById('userListModal').classList.add('active');
-        }
-
-        function closeUserListModal() {
-            document.getElementById('userListModal').classList.remove('active');
-        }
-
-        // Follow system
-        function toggleFollow(userId) {
-            if (!follows[currentUser.id]) {
-                follows[currentUser.id] = [];
-            }
-
-            const index = follows[currentUser.id].indexOf(userId);
-            
-            if (index > -1) {
-                follows[currentUser.id].splice(index, 1);
-            } else {
-                follows[currentUser.id].push(userId);
-            }
-
-            saveData('flipsidFollows', follows);
-            
-            // Reload the modal to update button state
-            const modal = document.getElementById('userListModal');
-            if (modal.classList.contains('active')) {
-                // Re-render the current modal content
-                document.querySelectorAll('.follow-btn').forEach(btn => {
-                    const btnUserId = parseInt(btn.getAttribute('onclick').match(/\d+/)[0]);
-                    if (btnUserId === userId) {
-                        const isNowFollowing = follows[currentUser.id].includes(userId);
-                        btn.className = isNowFollowing ? 'follow-btn following' : 'follow-btn';
-                        btn.textContent = isNowFollowing ? '✓ Following' : '+ Follow';
-                    }
-                });
-            }
-        }
-
-        // Load friends tab with combined list
-        function loadFriends() {
-            const container = document.getElementById('friendsContent');
-            
-            const following = follows[currentUser.id] || [];
-            const followers = Object.keys(follows).filter(userId => 
-                follows[userId].map(id => String(id)).includes(String(currentUser.id)) && 
-                String(userId) !== String(currentUser.id)
-            ).map(id => parseInt(id));
-
-            // Get pending follow requests TO me
-            const pendingRequestsToMe = followRequests[currentUser.id] || [];
-
-            let html = '';
-
-            // Show pending follow requests first
-            if (pendingRequestsToMe.length > 0) {
-                html += '<div class="section-header" style="background: linear-gradient(135deg, #FF9800, #F57C00);">🔔 Follow Requests (' + pendingRequestsToMe.length + ')</div>';
-                html += '<div style="display: grid; gap: 15px; margin-bottom: 30px;">';
-                pendingRequestsToMe.forEach(requesterId => {
-                    const requester = users.find(u => u.id === requesterId);
-                    if (requester) {
-                        html += `
-                            <div class="user-list-item" style="border-color: #FF9800;">
-                                <div style="flex: 1;">
-                                    <div style="display: flex; align-items: center; gap: 10px;">
-                                        ${requester.profilePic ? `<img src="${requester.profilePic}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover;">` : `<div class="user-avatar" style="width: 40px; height: 40px;">${requester.nickname.charAt(0).toUpperCase()}</div>`}
-                                        <strong>${requester.nickname}</strong>
-                                    </div>
-                                    <div style="color: #FF9800; font-size: 0.9em; margin-top: 5px;">Wants you to follow them back</div>
-                                </div>
-                                <div style="display: flex; gap: 10px;">
-                                    <button class="btn-approve" onclick="acceptFollowRequest(${requesterId})">Accept</button>
-                                    <button class="btn-reject" onclick="rejectFollowRequest(${requesterId})">Decline</button>
-                                </div>
-                            </div>
-                        `;
-                    }
-                });
-                html += '</div>';
-            }
-
-            // Get all unique users (following + followers), exclude super admins
-            const allFriendIds = [...new Set([...following, ...followers])];
-            const allFriends = allFriendIds.map(id => users.find(u => u.id === id)).filter(u => u && !u.isSuperAdmin);
-
-            html += '<div class="section-header">👥 Friends & Followers</div>';
-            
-            if (allFriends.length === 0) {
-                html += `
-                    <div class="empty-state">
-                        <div class="empty-state-icon">👥</div>
-                        <h3>No Friends Yet</h3>
-                        <p>Start following other users to build your network!</p>
-                    </div>
-                `;
-            } else {
-                html += '<div style="display: grid; gap: 15px; margin-bottom: 30px;">';
-                allFriends.forEach(user => {
-                    const isFollowing = following.includes(user.id);
-                    const isFollower = followers.includes(user.id);
-                    const hasSentRequest = followRequests[user.id] && followRequests[user.id].includes(currentUser.id);
-                    
-                    html += `
-                        <div class="user-list-item">
-                            <div style="flex: 1; cursor: pointer;" onclick="viewUserProfile(${user.id})">
-                                <div style="display: flex; align-items: center; gap: 10px;">
-                                    ${user.profilePic ? `<img src="${user.profilePic}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover;">` : `<div class="user-avatar" style="width: 40px; height: 40px;">${user.nickname.charAt(0).toUpperCase()}</div>`}
-                                    <div>
-                                        <strong>${user.nickname}</strong>
-                                        <div style="display: flex; gap: 5px; margin-top: 3px;">
-                                            ${isFollowing ? '<span style="background: #4CAF50; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.75em;">Following</span>' : ''}
-                                            ${isFollower ? '<span style="background: #2196F3; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.75em;">Follows You</span>' : ''}
-                                            ${hasSentRequest ? '<span style="background: #FF9800; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.75em;">Request Sent</span>' : ''}
-                                        </div>
-                                    </div>
-                                </div>
-                                ${user.flipcoins ? `<div style="color: #999; font-size: 0.9em; margin-top: 5px;">💰 ${user.flipcoins} FlipCoins</div>` : ''}
-                            </div>
-                            <div style="display: flex; gap: 10px; flex-direction: column;">
-                                ${isFollowing ? 
-                                    `<button class="follow-btn following" onclick="toggleFollow(${user.id}); loadFriends();">✓ Following</button>` : 
-                                    hasSentRequest ? 
-                                    `<button class="btn-small btn-secondary" disabled style="opacity: 0.6;">Request Sent</button>` :
-                                    `<button class="follow-btn" onclick="toggleFollow(${user.id}); loadFriends();">+ Follow</button>`
-                                }
-                                ${isFollower && !isFollowing && !hasSentRequest ? 
-                                    `<button class="btn-small" onclick="sendFollowRequest(${user.id}); loadFriends();" style="background: #FF9800;">📨 Ask to Follow</button>` : 
-                                    ''
-                                }
-                                <button class="btn-small btn-secondary" onclick="viewUserProfile(${user.id})">View Cards</button>
-                            </div>
-                        </div>
-                    `;
-                });
-                html += '</div>';
-            }
-
-            // Discover section - show all approved users except super admins and self
-            const allOtherUsers = users.filter(u => 
-                String(u.id) !== String(currentUser.id) && 
-                u.approved && 
-                !u.isSuperAdmin &&
-                !allFriendIds.map(id => String(id)).includes(String(u.id))
-            );
-
-            if (allOtherUsers.length > 0) {
-                html += '<div class="section-header">🔍 Discover Users</div>';
-                html += '<div style="display: grid; gap: 15px;">';
-                allOtherUsers.forEach(user => {
-                    const hasSentRequest = followRequests[user.id] && followRequests[user.id].includes(currentUser.id);
-                    
-                    html += `
-                        <div class="user-list-item">
-                            <div style="flex: 1; cursor: pointer;" onclick="viewUserProfile(${user.id})">
-                                <div style="display: flex; align-items: center; gap: 10px;">
-                                    ${user.profilePic ? `<img src="${user.profilePic}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover;">` : `<div class="user-avatar" style="width: 40px; height: 40px;">${user.nickname.charAt(0).toUpperCase()}</div>`}
-                                    <div>
-                                        <strong>${user.nickname}</strong>
-                                        ${user.isAdmin ? '<span style="background:#ff4444; color:white; padding:2px 6px; border-radius:4px; font-size:0.7em; margin-left:5px;">ADMIN</span>' : ''}
-                                        ${hasSentRequest ? '<div style="color: #FF9800; font-size: 0.75em; margin-top: 3px;">Request Sent</div>' : ''}
-                                    </div>
-                                </div>
-                                ${user.flipcoins ? `<div style="color: #999; font-size: 0.9em; margin-top: 5px;">💰 ${user.flipcoins} FlipCoins</div>` : ''}
-                            </div>
-                            <div style="display: flex; gap: 10px; flex-direction: column;">
-                                ${hasSentRequest ? 
-                                    `<button class="btn-small btn-secondary" disabled style="opacity: 0.6;">Request Sent</button>` :
-                                    `<button class="follow-btn" onclick="toggleFollow(${user.id}); loadFriends();">+ Follow</button>`
-                                }
-                                ${!hasSentRequest ? 
-                                    `<button class="btn-small" onclick="sendFollowRequest(${user.id}); loadFriends();" style="background: #FF9800;">📨 Ask to Follow</button>` : 
-                                    ''
-                                }
-                                <button class="btn-small btn-secondary" onclick="viewUserProfile(${user.id})">View Cards</button>
-                            </div>
-                        </div>
-                    `;
-                });
-                html += '</div>';
-            } else if (allFriends.length === 0) {
-                html += `
-                    <div class="empty-state">
-                        <div class="empty-state-icon">👥</div>
-                        <h3>No other users yet</h3>
-                        <p>You're the first one here! Share FlipSid with your friends so they can sign up.</p>
-                    </div>
-                `;
-            }
-
-            container.innerHTML = html;
-            updateFollowRequestBadge();
-        }
-
-        // Profile picture preview
-        function previewProfilePic(input, imgId, placeholderId) {
-            if (input.files && input.files[0]) {
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    const img = document.getElementById(imgId);
-                    img.src = e.target.result;
-                    img.style.display = 'block';
-                    if (placeholderId) {
-                        document.getElementById(placeholderId).style.display = 'none';
-                    }
-                };
-                reader.readAsDataURL(input.files[0]);
-            }
-        }
-
-        // Edit Profile
-        function showEditProfile() {
-            document.getElementById('editProfileNickname').value = currentUser.nickname;
-            if (currentUser.profilePic) {
-                document.getElementById('currentProfilePic').src = currentUser.profilePic;
-                document.getElementById('currentProfilePic').style.display = 'block';
-                document.getElementById('editProfilePicPlaceholder').style.display = 'none';
-            }
-            document.getElementById('editProfileModal').classList.add('active');
-        }
-
-        function closeEditProfile() {
-            document.getElementById('editProfileModal').classList.remove('active');
-        }
-
-        function saveProfile() {
-            const newNickname = document.getElementById('editProfileNickname').value;
-            const profilePicFile = document.getElementById('editProfilePicInput').files[0];
-
-            if (newNickname !== currentUser.nickname && users.find(u => u.nickname === newNickname && u.id !== currentUser.id)) {
-                alert('Nickname already taken!');
-                return;
-            }
-
-            currentUser.nickname = newNickname;
-
-            if (profilePicFile) {
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    currentUser.profilePic = e.target.result;
-                    updateUserAndRefresh();
-                };
-                reader.readAsDataURL(profilePicFile);
-            } else {
-                updateUserAndRefresh();
-            }
-        }
-
-        function updateUserAndRefresh() {
-            const userIndex = users.findIndex(u => u.id === currentUser.id);
-            users[userIndex] = currentUser;
-            saveData('flipsidUsers', users);
-            localStorage.setItem('flipsidCurrentUser', JSON.stringify(currentUser));
-            closeEditProfile();
-            showDashboard();
-        }
-
-        // Filter functions for browse cards
-        function applyFilters() {
-            const searchText = document.getElementById('searchText').value.toLowerCase();
-            const filterTeam = document.getElementById('filterTeam').value;
-            const filterType = document.getElementById('filterType').value;
-            const filterCompany = document.getElementById('filterCompany').value;
-
-            const filtered = cards.filter(card => {
-                if (!card.approved) return false;
-                if (searchText && !card.playerName.toLowerCase().includes(searchText)) return false;
-                if (filterTeam && card.team !== filterTeam) return false;
-                if (filterType && card.cardType !== filterType) return false;
-                if (filterCompany && card.company !== filterCompany) return false;
-                return true;
-            });
-
-            const container = document.getElementById('browseCardsList');
-            if (filtered.length === 0) {
-                container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🔍</div><h3>No cards found</h3><p>Try different filters</p></div>';
-                return;
-            }
-
-            const sorted = [...filtered].sort((a, b) => getCardLikes(b.id) - getCardLikes(a.id));
-            container.innerHTML = sorted.map(card => renderCard(card, true)).join('');
-            
-            // Update filter dropdowns with available options
-            updateFilterOptions();
-        }
-
-        function clearFilters() {
-            document.getElementById('searchText').value = '';
-            document.getElementById('filterTeam').value = '';
-            document.getElementById('filterType').value = '';
-            document.getElementById('filterCompany').value = '';
-            loadBrowseCards();
-        }
-
-        function updateFilterOptions() {
-            const teams = [...new Set(cards.filter(c => c.approved).map(c => c.team))].sort();
-            const types = [...new Set(cards.filter(c => c.approved).map(c => c.cardType))].sort();
-            
-            const teamSelect = document.getElementById('filterTeam');
-            const currentTeam = teamSelect.value;
-            teamSelect.innerHTML = '<option value="">All Teams</option>' + teams.map(t => `<option value="${t}">${t}</option>`).join('');
-            if (teams.includes(currentTeam)) teamSelect.value = currentTeam;
-
-            const typeSelect = document.getElementById('filterType');
-            const currentType = typeSelect.value;
-            typeSelect.innerHTML = '<option value="">All Types</option>' + types.map(t => `<option value="${t}">${t}</option>`).join('');
-            if (types.includes(currentType)) typeSelect.value = currentType;
-        }
-
-        // Your Cards filter
-        function filterYourCards(filter) {
-            currentYourCardsFilter = filter;
-            loadYourCards();
-        }
-
-        // Update loadYourCards to show action tags
-        function loadYourCards() {
-            const container = document.getElementById('yourCardsContent');
-            
-            let userCards = [];
-            if (currentYourCardsFilter === 'all' || currentYourCardsFilter === 'liked') {
-                userCards = userCards.concat(cards.filter(card => {
-                    const interactions = cardInteractions[card.id];
-                    return interactions && interactions.likes.includes(currentUser.id);
-                }));
-            }
-            if (currentYourCardsFilter === 'all' || currentYourCardsFilter === 'owned') {
-                userCards = userCards.concat(cards.filter(card => {
-                    const interactions = cardInteractions[card.id];
-                    return interactions && interactions.owns.includes(currentUser.id);
-                }));
-            }
-            if (currentYourCardsFilter === 'all' || currentYourCardsFilter === 'wanted') {
-                userCards = userCards.concat(cards.filter(card => {
-                    const interactions = cardInteractions[card.id];
-                    return interactions && interactions.wants.includes(currentUser.id);
-                }));
-            }
-
-            // Remove duplicates
-            userCards = [...new Set(userCards)];
-
-            const uploadedCards = cards.filter(card => card.uploadedBy === currentUser.id);
-
-            document.getElementById('uploadedCount').textContent = uploadedCards.length;
-            document.getElementById('yourCardsFlipcoins').textContent = currentUser.flipcoins || 0;
-
-            if (userCards.length === 0) {
-                container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">💝</div><h3>No cards yet</h3><p>Start interacting with cards!</p></div>';
-                return;
-            }
-
-            container.innerHTML = '<div class="cards-grid">' + userCards.map(card => renderCardWithTags(card)).join('') + '</div>';
-        }
-
-        function renderCardWithTags(card) {
-            const interactions = cardInteractions[card.id] || {likes: [], owns: [], wants: []};
-            const userLiked = interactions.likes.includes(currentUser.id);
-            const userOwns = interactions.owns.includes(currentUser.id);
-            const userWants = interactions.wants.includes(currentUser.id);
-
-            let actionTagsHtml = '<div class="action-tags">';
-            if (userLiked) actionTagsHtml += '<span class="action-tag liked">❤️ Loved</span>';
-            if (userOwns) actionTagsHtml += '<span class="action-tag owned">💪 Owned</span>';
-            if (userWants) actionTagsHtml += '<span class="action-tag wanted">🤲 Wanted</span>';
-            actionTagsHtml += '</div>';
-
-            return `
-                <div class="card-item" style="position: relative;">
-                    <div class="card-id-badge">#${card.id}</div>
-                    <div class="sport-icon">⚽</div>
-                    <div class="card-images">
-                        <div class="card-image" onclick="openModal('${card.frontImage || ''}')">
-                            ${card.frontImage ? `<img src="${card.frontImage}" alt="Front">` : `${card.playerName}<br>FRONT`}
-                        </div>
-                        <div class="card-image" onclick="openModal('${card.backImage || ''}')">
-                            ${card.backImage ? `<img src="${card.backImage}" alt="Back">` : `${card.playerName}<br>BACK`}
-                        </div>
-                    </div>
-                    <div class="card-info">
-                        <h3>${card.playerName}</h3>
-                        <div class="card-detail"><strong>Team:</strong><span>${card.team} ${card.clubIcon || ''}</span></div>
-                        <div class="card-detail"><strong>Type:</strong><span>${card.cardType}</span></div>
-                        <div class="card-detail"><strong>Company:</strong><span>${card.company}</span></div>
-                        ${card.tags && card.tags.length > 0 ? '<div class="tags">' + card.tags.map(tag => `<span class="tag ${tag.toLowerCase()}">${tag}</span>`).join('') + '</div>' : ''}
-                        ${actionTagsHtml}
-                    </div>
-                </div>
-            `;
-        }
-
-        // Clubs management
-        function populateClubsDropdown() {
-            const select = document.getElementById('uploadPlayerTeam');
-            select.innerHTML = '<option value="">Select Club</option>' + 
-                approvedClubs.map(club => `<option value="${club.name}">${club.name} ${club.icon}</option>`).join('') +
-                '<option value="custom">+ Add Custom Club</option>';
-        }
-
-        function handleClubSelect(select) {
-            const customInput = document.getElementById('uploadPlayerTeamCustom');
-            if (select.value === 'custom') {
-                customInput.style.display = 'block';
-                customInput.required = true;
-            } else {
-                customInput.style.display = 'none';
-                customInput.required = false;
-            }
-        }
-
-        function loadClubsList() {
-            const container = document.getElementById('clubsList');
-            container.innerHTML = approvedClubs.map((club, index) => `
-                <div class="user-list-item">
-                    <div><strong>${club.name}</strong> ${club.icon}</div>
-                    <button class="btn-reject" onclick="removeClub(${index})">Remove</button>
-                </div>
-            `).join('');
-        }
-
-        function addClub() {
-            const name = document.getElementById('newClubName').value.trim();
-            const icon = document.getElementById('newClubIcon').value.trim();
-            if (!name) {
-                alert('Please enter club name');
-                return;
-            }
-            approvedClubs.push({name, icon: icon || '⚽'});
-            saveData('flipsidApprovedClubs', approvedClubs);
-            document.getElementById('newClubName').value = '';
-            document.getElementById('newClubIcon').value = '';
-            loadClubsList();
-            populateClubsDropdown();
-        }
-
-        function removeClub(index) {
-            if (confirm('Remove this club?')) {
-                approvedClubs.splice(index, 1);
-                saveData('flipsidApprovedClubs', approvedClubs);
-                loadClubsList();
-                populateClubsDropdown();
-            }
-        }
-
-        // Card types management
-        function populateTypesDropdown() {
-            const select = document.getElementById('uploadCardType');
-            select.innerHTML = '<option value="">Select Type</option>' + 
-                approvedTypes.map(type => `<option value="${type}">${type}</option>`).join('') +
-                '<option value="custom">+ Add Custom Type</option>';
-        }
-
-        function handleTypeSelect(select) {
-            const customInput = document.getElementById('uploadCardTypeCustom');
-            if (select.value === 'custom') {
-                customInput.style.display = 'block';
-                customInput.required = true;
-            } else {
-                customInput.style.display = 'none';
-                customInput.required = false;
-            }
-        }
-
-        function loadTypesList() {
-            const container = document.getElementById('typesList');
-            container.innerHTML = approvedTypes.map((type, index) => `
-                <div class="user-list-item">
-                    <div><strong>${type}</strong></div>
-                    <button class="btn-reject" onclick="removeType(${index})">Remove</button>
-                </div>
-            `).join('');
-        }
-
-        function addCardType() {
-            const type = document.getElementById('newCardType').value.trim();
-            if (!type) {
-                alert('Please enter card type');
-                return;
-            }
-            approvedTypes.push(type);
-            saveData('flipsidApprovedTypes', approvedTypes);
-            document.getElementById('newCardType').value = '';
-            loadTypesList();
-            populateTypesDropdown();
-        }
-
-        function removeType(index) {
-            if (confirm('Remove this type?')) {
-                approvedTypes.splice(index, 1);
-                saveData('flipsidApprovedTypes', approvedTypes);
-                loadTypesList();
-                populateTypesDropdown();
-            }
-        }
-
-        // Super admin functions
-        function loadAdminsList() {
-            const admins = users.filter(u => u.isAdmin);
-            const container = document.getElementById('adminsList');
-            container.innerHTML = admins.map(admin => `
-                <div class="user-list-item">
-                    <div>
-                        <strong>${admin.nickname}</strong>
-                        ${admin.isSuperAdmin ? '<span style="color: #9C27B0;"> (Super Admin)</span>' : ''}
-                        <div style="color: #999; font-size: 0.9em;">${admin.fullName}</div>
-                    </div>
-                    ${!admin.isSuperAdmin ? `<button class="btn-reject" onclick="removeAdmin(${admin.id})">Remove Admin</button>` : ''}
-                </div>
-            `).join('');
-        }
-
-        function searchAndPromoteUser() {
-            const nickname = document.getElementById('searchUserNickname').value.trim();
-            if (!nickname) {
-                alert('Enter a nickname');
-                return;
-            }
-            const user = users.find(u => u.nickname.toLowerCase() === nickname.toLowerCase() && !u.isAdmin);
-            if (!user) {
-                alert('User not found or already an admin');
-                return;
-            }
-            if (confirm(`Make ${user.nickname} an admin?`)) {
-                user.isAdmin = true;
-                saveData('flipsidUsers', users);
-                document.getElementById('searchUserNickname').value = '';
-                loadAdminsList();
-                alert(`${user.nickname} is now an admin!`);
-            }
-        }
-
-        function removeAdmin(userId) {
-            if (confirm('Remove admin privileges?')) {
-                const user = users.find(u => u.id === userId);
-                user.isAdmin = false;
-                saveData('flipsidUsers', users);
-                loadAdminsList();
-            }
-        }
-
-        // Render card with new UI - heart icon + count, Own/Want on one row
-        function renderCard(card, showActions = true) {
-            const interactions = cardInteractions[card.id] || {likes: [], owns: [], wants: []};
-            const userLiked = interactions.likes.includes(currentUser.id);
-            const userOwns = interactions.owns.includes(currentUser.id);
-            const userWants = interactions.wants.includes(currentUser.id);
-
-            const tagsHtml = card.tags && card.tags.length > 0 ? 
-                '<div class="tags">' + card.tags.map(tag => `<span class="tag ${tag.toLowerCase()}">${tag}</span>`).join('') + '</div>' : '';
-
-            const editButtonHtml = currentUser.isAdmin ? `<button class="btn-edit-card" onclick="editApprovedCard(${card.id})">✏️</button>` : '';
-            const uploaderHtml = currentUser.isAdmin && card.uploaderNickname ? 
-                `<div class="uploader-badge">⬆️ ${card.uploaderNickname}</div>` : '';
-
-            return `
-                <div class="card-item" style="position: relative;">
-                    <div class="card-id-badge">#${card.id}</div>
-                    <div class="card-images">
-                        <div class="card-image" onclick="openModal('${card.frontImage || ''}')">
-                            ${card.frontImage ? `<img src="${card.frontImage}" alt="Front">` : `${card.playerName}<br>FRONT`}
-                        </div>
-                        <div class="card-image" onclick="openModal('${card.backImage || ''}')">
-                            ${card.backImage ? `<img src="${card.backImage}" alt="Back">` : `${card.playerName}<br>BACK`}
-                        </div>
-                    </div>
-                    <div class="card-info">
-                        <div class="card-title-row">
-                            <h3>${card.playerName}</h3>
-                            <div class="card-title-actions">
-                                <span class="heart-icon ${userLiked ? 'liked' : ''}" onclick="toggleLike(${card.id})" title="Love it">
-                                    ${userLiked ? '❤️' : '🤍'} <span class="heart-count" onclick="event.stopPropagation(); showUserList(${card.id}, 'likes')">${interactions.likes.length}</span>
-                                </span>
-                                ${editButtonHtml}
-                            </div>
-                        </div>
-                        <div class="card-detail"><strong>Team:</strong><span>${card.team} ${card.clubIcon || ''}</span></div>
-                        <div class="card-detail"><strong>Type:</strong><span>${card.cardType}</span></div>
-                        <div class="card-detail"><strong>Company:</strong><span>${card.company}</span></div>
-                        ${tagsHtml}
-                        <div class="interaction-counters">
-                            <div class="interaction-counter owns" onclick="showUserList(${card.id}, 'owns')">💪 ${interactions.owns.length} owners</div>
-                            <div class="interaction-counter wants" onclick="showUserList(${card.id}, 'wants')">🤲 ${interactions.wants.length} wanting</div>
-                        </div>
-                        ${uploaderHtml}
-                    </div>
-                    ${showActions ? `
-                        <div class="card-actions">
-                            <button class="btn-small ${userOwns ? 'btn-active' : ''}" onclick="toggleOwn(${card.id})" ${userWants ? 'disabled style="opacity:0.4;"' : ''}>
-                                ${userOwns ? '💪 Own ✓' : '💪 Own'}
-                            </button>
-                            <button class="btn-small ${userWants ? 'btn-active' : ''}" onclick="toggleWant(${card.id})" ${userOwns ? 'disabled style="opacity:0.4;"' : ''}>
-                                ${userWants ? '🤲 Want ✓' : '🤲 Want'}
-                            </button>
-                        </div>
-                    ` : ''}
-                </div>
-            `;
-        }
-
-        // Update loadBrowseCards to use filters
-        function loadBrowseCards() {
-            updateFilterOptions();
-            applyFilters();
-        }
-
-        // Update uploadCard to handle custom clubs/types
-        function uploadCard(e) {
-            e.preventDefault();
-            
-            const frontImage = document.getElementById('uploadFrontImage').files[0];
-            const backImage = document.getElementById('uploadBackImage').files[0];
-            
-            if (!frontImage || !backImage) {
-                alert('Please upload both front and back images');
-                return;
-            }
-
-            let team = document.getElementById('uploadPlayerTeam').value;
-            if (team === 'custom') {
-                team = document.getElementById('uploadPlayerTeamCustom').value.trim();
-                if (!team) {
-                    alert('Please enter custom club name');
-                    return;
-                }
-            }
-
-            let cardType = document.getElementById('uploadCardType').value;
-            if (cardType === 'custom') {
-                cardType = document.getElementById('uploadCardTypeCustom').value.trim();
-                if (!cardType) {
-                    alert('Please enter custom card type');
-                    return;
-                }
-            }
-
-            const tagsInput = document.getElementById('uploadTags').value;
-            const tags = tagsInput ? tagsInput.split(',').map(t => t.trim()).filter(t => t) : [];
-
-            const card = {
-                id: Date.now(),
-                playerName: document.getElementById('uploadPlayerName').value,
-                team: team,
-                clubIcon: approvedClubs.find(c => c.name === team)?.icon || '',
-                cardType: cardType,
-                company: document.getElementById('uploadCardCompany').value,
-                sport: "Football",
-                tags: tags,
-                frontImage: null,
-                backImage: null,
-                uploadedBy: currentUser.id,
-                uploaderNickname: currentUser.nickname,
-                createdAt: new Date().toISOString(),
-                approved: false,
-                userInteractions: {
-                    like: document.getElementById('uploadLike').checked,
-                    own: document.getElementById('uploadOwn').checked,
-                    want: document.getElementById("uploadWant").checked,
-                    
-                }
-            };
-
-            const frontReader = new FileReader();
-            const backReader = new FileReader();
-            
-            frontReader.onload = function(e) {
-                card.frontImage = e.target.result;
-                
-                backReader.onload = function(e) {
-                    card.backImage = e.target.result;
-                    
-                    pendingCards.push(card);
-                    saveData('flipsidPendingCards', pendingCards);
-                    
-                    document.querySelector('#uploadTab form').reset();
-                    document.getElementById('uploadFrontPreview').innerHTML = '';
-                    document.getElementById('uploadBackPreview').innerHTML = '';
-                    document.getElementById('uploadPlayerTeamCustom').style.display = 'none';
-                    document.getElementById('uploadCardTypeCustom').style.display = 'none';
-                    
-                    alert('Card submitted for approval! You\'ll earn 1 FlipCoin once approved. 🎉');
-                    switchTab('browse');
-                };
-                backReader.readAsDataURL(backImage);
-            };
-            frontReader.readAsDataURL(frontImage);
-        }
-
-        // Update approveCard to add new clubs/types to approved lists
         async function approveCard(cardId) {
-            const cardIndex = pendingCards.findIndex(c => c.id === cardId);
-            if (cardIndex === -1) return;
+            const card = pendingCards.find(c => String(c.id) === String(cardId));
+            if (!card) return;
 
-            const card = pendingCards[cardIndex];
             card.approved = true;
 
-            // Add new club to approved list if not present
-            if (!approvedClubs.find(c => c.name === card.team)) {
-                approvedClubs.push({name: card.team, icon: card.clubIcon || '⚽'});
-            }
+            // Add club/type if new
+            if (!approvedClubs.find(c => c.name === card.team)) approvedClubs.push({name: card.team, icon: card.clubIcon || '⚽'});
+            if (!approvedTypes.includes(card.cardType)) approvedTypes.push(card.cardType);
 
-            // Add new type to approved list if not present
-            if (!approvedTypes.includes(card.cardType)) {
-                approvedTypes.push(card.cardType);
-            }
-
-            cardInteractions[card.id] = {
-                likes: card.userInteractions?.like ? [card.uploadedBy] : [],
-                owns: card.userInteractions?.own ? [card.uploadedBy] : [],
-                wants: card.userInteractions?.want ? [card.uploadedBy] : []
+            const ix = {
+                likes: card.userInteractions?.like  ? [String(card.uploadedBy)] : [],
+                owns:  card.userInteractions?.own   ? [String(card.uploadedBy)] : [],
+                wants: card.userInteractions?.want  ? [String(card.uploadedBy)] : []
             };
 
-            cards.push(card);
-            pendingCards.splice(cardIndex, 1);
-
-            const uploader = users.find(u => u.id === card.uploadedBy);
+            // Award FlipCoin to uploader
+            const uploader = users.find(u => String(u.id) === String(card.uploadedBy));
             if (uploader) {
                 uploader.flipcoins = (uploader.flipcoins || 0) + 1;
                 if (String(currentUser.id) === String(uploader.id)) {
@@ -3395,188 +2622,568 @@
                 }
             }
 
-            // Wait for all Firebase writes to complete before refreshing UI
             await Promise.all([
-                saveData('flipsidUsers', users),
-                saveData('flipsidCards', cards),
-                saveData('flipsidCardInteractions', cardInteractions),
-                saveData('flipsidPendingCards', pendingCards),
-                saveData('flipsidApprovedClubs', approvedClubs),
-                saveData('flipsidApprovedTypes', approvedTypes)
+                saveCard(card),
+                deletePendingCard(cardId),
+                saveInteractions(cardId, ix),
+                uploader ? saveUser(uploader) : Promise.resolve(),
+                saveMeta()
             ]);
 
             loadBrowseCards();
-            loadClubsList();
-            loadTypesList();
             populateClubsDropdown();
             populateTypesDropdown();
             renderAdminCards();
-            alert(`Card approved! ${uploader ? uploader.nickname : 'User'} earned 1 FlipCoin! 🎉`);
+            alert(`✅ Card approved! ${uploader ? uploader.nickname + ' earned 1 FlipCoin! 🎉' : ''}`);
         }
 
-        let currentViewingUserId = null;
-        let currentUserCardFilter = 'all';
-
-        // View user profile
-        function viewUserProfile(userId) {
-            currentViewingUserId = userId;
-            currentUserCardFilter = 'all';
-            
-            const user = users.find(u => u.id === userId);
-            if (!user) return;
-
-            document.getElementById('viewUserNickname').textContent = user.nickname;
-            document.getElementById('viewUserStats').textContent = `💰 ${user.flipcoins || 0} FlipCoins`;
-            
-            if (user.profilePic) {
-                document.getElementById('viewUserProfilePic').src = user.profilePic;
-                document.getElementById('viewUserProfilePic').style.display = 'block';
-                document.getElementById('viewUserProfilePlaceholder').style.display = 'none';
-            } else {
-                document.getElementById('viewUserProfilePlaceholder').textContent = user.nickname.charAt(0).toUpperCase();
-                document.getElementById('viewUserProfilePic').style.display = 'none';
-                document.getElementById('viewUserProfilePlaceholder').style.display = 'flex';
-            }
-
-            loadUserCards();
-            document.getElementById('userProfileModal').classList.add('active');
+        async function rejectCard(cardId) {
+            if (!confirm('Reject this card?')) return;
+            await deletePendingCard(cardId);
+            renderAdminCards();
         }
 
-        function closeUserProfile() {
-            document.getElementById('userProfileModal').classList.remove('active');
-            currentViewingUserId = null;
+        async function deleteCard(cardId) {
+            if (!confirm('Permanently delete this card?')) return;
+            await deleteCardFromDB(cardId);
+            renderAdminCards();
+            loadBrowseCards();
         }
 
-        function filterUserCards(filter) {
-            currentUserCardFilter = filter;
-            loadUserCards();
+        // ============================================================
+        // EDIT CARD MODAL
+        // ============================================================
+
+        function openEditCardModal(cardId, isPending) {
+            const card = isPending
+                ? pendingCards.find(c => String(c.id) === String(cardId))
+                : cards.find(c => String(c.id) === String(cardId));
+            if (!card) return;
+
+            document.getElementById('editCardId').value        = cardId;
+            document.getElementById('editCardPending').value   = isPending ? 'true' : 'false';
+            document.getElementById('editPlayerName').value    = card.playerName;
+            document.getElementById('editTeam').value          = card.team;
+            document.getElementById('editCardType').value      = card.cardType;
+            document.getElementById('editCompany').value       = card.company;
+            document.getElementById('editModal').classList.add('active');
         }
 
-        function loadUserCards() {
-            if (!currentViewingUserId) return;
+        function closeEditModal() { document.getElementById('editModal').classList.remove('active'); }
 
-            const container = document.getElementById('userProfileCards');
-            
-            let userCards = [];
-            if (currentUserCardFilter === 'all' || currentUserCardFilter === 'liked') {
-                userCards = userCards.concat(cards.filter(card => {
-                    const interactions = cardInteractions[card.id];
-                    return interactions && interactions.likes.includes(currentViewingUserId);
-                }));
-            }
-            if (currentUserCardFilter === 'all' || currentUserCardFilter === 'owned') {
-                userCards = userCards.concat(cards.filter(card => {
-                    const interactions = cardInteractions[card.id];
-                    return interactions && interactions.owns.includes(currentViewingUserId);
-                }));
-            }
-            if (currentUserCardFilter === 'all' || currentUserCardFilter === 'wanted') {
-                userCards = userCards.concat(cards.filter(card => {
-                    const interactions = cardInteractions[card.id];
-                    return interactions && interactions.wants.includes(currentViewingUserId);
-                }));
-            }
+        async function saveEditedCard() {
+            const cardId    = document.getElementById('editCardId').value;
+            const isPending = document.getElementById('editCardPending').value === 'true';
+            const card = isPending
+                ? pendingCards.find(c => String(c.id) === String(cardId))
+                : cards.find(c => String(c.id) === String(cardId));
+            if (!card) return;
 
-            // Remove duplicates
-            userCards = [...new Set(userCards)];
+            card.playerName = document.getElementById('editPlayerName').value.trim();
+            card.team       = document.getElementById('editTeam').value.trim();
+            card.cardType   = document.getElementById('editCardType').value.trim();
+            card.company    = document.getElementById('editCompany').value.trim();
 
-            if (userCards.length === 0) {
-                container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📦</div><h3>No cards yet</h3><p>This user hasn\'t interacted with any cards yet</p></div>';
-                return;
-            }
+            if (isPending) await savePendingCard(card);
+            else           await saveCard(card);
 
-            container.innerHTML = '<div class="cards-grid">' + userCards.map(card => renderUserCard(card, currentViewingUserId)).join('') + '</div>';
+            closeEditModal();
+            renderAdminCards();
+            loadBrowseCards();
         }
 
-        // Follow request functions
-        function sendFollowRequest(userId) {
-            if (!followRequests[userId]) {
-                followRequests[userId] = [];
-            }
-            
-            if (!followRequests[userId].includes(currentUser.id)) {
-                followRequests[userId].push(currentUser.id);
-                saveData('flipsidFollowRequests', followRequests);
-                alert('Follow request sent! 📨');
-            }
+        // also keep editApprovedCard as alias for backward compat
+        function editApprovedCard(cardId) { openEditCardModal(cardId, false); }
+
+        // ============================================================
+        // IMAGE MODAL
+        // ============================================================
+
+        function openModal(src) {
+            if (!src) return;
+            document.getElementById('imageModal').classList.add('active');
+            document.getElementById('modalImage').src = src;
         }
+        function closeModal() { document.getElementById('imageModal').classList.remove('active'); }
 
-        function acceptFollowRequest(requesterId) {
-            // Add to my following list
-            if (!follows[currentUser.id]) {
-                follows[currentUser.id] = [];
-            }
-            
-            if (!follows[currentUser.id].includes(requesterId)) {
-                follows[currentUser.id].push(requesterId);
-                saveData('flipsidFollows', follows);
-            }
+        // ============================================================
+        // USER LIST MODAL (who loved/owns/wants)
+        // ============================================================
 
-            // Remove from pending requests
-            if (followRequests[currentUser.id]) {
-                followRequests[currentUser.id] = followRequests[currentUser.id].filter(id => id !== requesterId);
-                saveData('flipsidFollowRequests', followRequests);
-            }
+        function showUserList(cardId, type) {
+            const ix   = cardInteractions[String(cardId)] || cardInteractions[cardId] || {};
+            const ids  = (type === 'likes' ? ix.likes : type === 'owns' ? ix.owns : ix.wants) || [];
+            const card = cards.find(c => String(c.id) === String(cardId));
+            const title = type === 'likes' ? '❤️ Loved by' : type === 'owns' ? '💪 Owned by' : '🤲 Wanted by';
 
+            let html = `<h3 style="color:#ffaf00;margin-bottom:15px;">${title}</h3>`;
+            if (ids.length === 0) { html += '<p style="color:#999;">Nobody yet!</p>'; }
+            else {
+                ids.forEach(uid => {
+                    const u = users.find(x => String(x.id) === String(uid));
+                    if (!u) return;
+                    html += `<div class="user-list-item" style="cursor:pointer;" onclick="viewUserProfile(${u.id})">
+                        ${u.profilePic ? `<img src="${u.profilePic}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;">` : `<div class="user-avatar" style="width:40px;height:40px;">${u.nickname.charAt(0).toUpperCase()}</div>`}
+                        <strong>${u.nickname}</strong>
+                    </div>`;
+                });
+            }
+            document.getElementById('userListContent').innerHTML = html;
+            document.getElementById('userListModal').classList.add('active');
+        }
+        function closeUserListModal() { document.getElementById('userListModal').classList.remove('active'); }
+
+        // ============================================================
+        // FOLLOWS
+        // ============================================================
+
+        async function toggleFollow(userId) {
+            const myId  = String(currentUser.id);
+            const theirId = String(userId);
+            if (!follows[myId]) follows[myId] = { following: [], requests: [] };
+            const fd = follows[myId];
+            if (!fd.following) fd.following = [];
+            const idx = fd.following.map(String).indexOf(theirId);
+            if (idx >= 0) fd.following.splice(idx, 1);
+            else fd.following.push(theirId);
+            await saveFollows(currentUser.id, fd);
             loadFriends();
-            alert('You are now following this user! ✅');
         }
 
-        function rejectFollowRequest(requesterId) {
-            if (followRequests[currentUser.id]) {
-                followRequests[currentUser.id] = followRequests[currentUser.id].filter(id => id !== requesterId);
-                saveData('flipsidFollowRequests', followRequests);
-            }
+        async function sendFollowRequest(userId) {
+            const myId    = String(currentUser.id);
+            const theirId = String(userId);
+            if (!follows[myId]) follows[myId] = { following: [], requests: [] };
+            const fd = follows[myId];
+            if (!fd.requests) fd.requests = [];
+            if (!fd.requests.map(String).includes(theirId)) fd.requests.push(theirId);
+            await saveFollows(currentUser.id, fd);
             loadFriends();
+        }
+
+        async function acceptFollowRequest(requesterId) {
+            const myId = String(currentUser.id);
+            const rId  = String(requesterId);
+            // Remove request from requester's follows doc
+            if (follows[rId] && follows[rId].requests) {
+                follows[rId].requests = follows[rId].requests.filter(x => String(x) !== myId);
+                await saveFollows(requesterId, follows[rId]);
+            }
+            // Add to my followers (add them to my following too for mutual)
+            if (!follows[myId]) follows[myId] = { following: [], requests: [] };
+            if (!follows[myId].following) follows[myId].following = [];
+            if (!follows[myId].following.map(String).includes(rId)) follows[myId].following.push(rId);
+            await saveFollows(currentUser.id, follows[myId]);
+            followRequests = buildFollowRequests();
+            loadFriends();
+            updateFollowRequestBadge();
+        }
+
+        async function rejectFollowRequest(requesterId) {
+            const myId = String(currentUser.id);
+            const rId  = String(requesterId);
+            if (follows[rId] && follows[rId].requests) {
+                follows[rId].requests = follows[rId].requests.filter(x => String(x) !== myId);
+                await saveFollows(requesterId, follows[rId]);
+            }
+            followRequests = buildFollowRequests();
+            loadFriends();
+            updateFollowRequestBadge();
         }
 
         function updateFollowRequestBadge() {
-            const pendingRequestsToMe = followRequests[currentUser.id] || [];
+            const myRequests = followRequests[String(currentUser.id)] || [];
             const badge = document.getElementById('friendRequestBadge');
+            if (!badge) return;
+            if (myRequests.length > 0) { badge.textContent = myRequests.length; badge.style.display = 'inline'; }
+            else badge.style.display = 'none';
+        }
+
+        // ============================================================
+        // FRIENDS TAB
+        // ============================================================
+
+        function loadFriends() {
+            const container = document.getElementById('friendsContent');
+            const myId = String(currentUser.id);
+            const myFollows = follows[myId] || {};
+            const following = (myFollows.following || []).map(String);
+            const followers = Object.keys(follows).filter(uid =>
+                uid !== myId && follows[uid].following && follows[uid].following.map(String).includes(myId)
+            ).map(String);
+
+            const pendingToMe = followRequests[myId] || [];
+            const allFriendIds = [...new Set([...following, ...followers])];
+            const allFriends = allFriendIds
+                .map(id => users.find(u => String(u.id) === id))
+                .filter(u => u && !u.isSuperAdmin);
+
+            let html = '';
+
+            // Follow requests
+            if (pendingToMe.length > 0) {
+                html += '<div class="section-header" style="background:linear-gradient(135deg,#FF9800,#F57C00);">🔔 Follow Requests (' + pendingToMe.length + ')</div>';
+                html += '<div style="display:grid;gap:15px;margin-bottom:30px;">';
+                pendingToMe.forEach(rid => {
+                    const r = users.find(u => String(u.id) === String(rid));
+                    if (!r) return;
+                    html += `<div class="user-list-item" style="border-color:#FF9800;">
+                        <div style="flex:1;">
+                            <div style="display:flex;align-items:center;gap:10px;">
+                                ${r.profilePic ? `<img src="${r.profilePic}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;">` : `<div class="user-avatar" style="width:40px;height:40px;">${r.nickname.charAt(0).toUpperCase()}</div>`}
+                                <strong>${r.nickname}</strong>
+                            </div>
+                        </div>
+                        <div style="display:flex;gap:10px;">
+                            <button class="btn-approve" onclick="acceptFollowRequest(${r.id})">Accept</button>
+                            <button class="btn-reject"  onclick="rejectFollowRequest(${r.id})">Decline</button>
+                        </div>
+                    </div>`;
+                });
+                html += '</div>';
+            }
+
+            // Friends
+            if (allFriends.length > 0) {
+                html += '<div class="section-header">👥 Friends (' + allFriends.length + ')</div>';
+                html += '<div style="display:grid;gap:15px;margin-bottom:30px;">';
+                allFriends.forEach(user => {
+                    const isFollowing = following.includes(String(user.id));
+                    const isFollower  = followers.includes(String(user.id));
+                    const hasSentReq  = myFollows.requests && myFollows.requests.map(String).includes(String(user.id));
+                    html += `<div class="user-list-item">
+                        <div style="flex:1;cursor:pointer;" onclick="viewUserProfile(${user.id})">
+                            <div style="display:flex;align-items:center;gap:10px;">
+                                ${user.profilePic ? `<img src="${user.profilePic}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;">` : `<div class="user-avatar" style="width:40px;height:40px;">${user.nickname.charAt(0).toUpperCase()}</div>`}
+                                <div>
+                                    <strong>${user.nickname}</strong>
+                                    <div style="font-size:0.8em;color:#999;margin-top:2px;">
+                                        ${isFollowing && isFollower ? '👥 Mutual' : isFollowing ? '➡️ Following' : '⬅️ Follower'}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                            ${isFollowing
+                                ? `<button class="follow-btn following" onclick="toggleFollow(${user.id})">✓ Following</button>`
+                                : hasSentReq
+                                    ? `<button class="btn-small btn-secondary" disabled>Request Sent</button>`
+                                    : `<button class="follow-btn" onclick="toggleFollow(${user.id})">+ Follow</button>`}
+                            <button class="btn-small btn-secondary" onclick="viewUserProfile(${user.id})">View Cards</button>
+                        </div>
+                    </div>`;
+                });
+                html += '</div>';
+            }
+
+            // Discover
+            const allFriendIdSet = new Set([...allFriendIds, myId]);
+            const discover = users.filter(u =>
+                !u.isSuperAdmin &&
+                !allFriendIdSet.has(String(u.id))
+            );
+
+            if (discover.length > 0) {
+                html += '<div class="section-header">🔍 Discover Users</div>';
+                html += '<div style="display:grid;gap:15px;">';
+                discover.forEach(user => {
+                    const hasSentReq = myFollows.requests && myFollows.requests.map(String).includes(String(user.id));
+                    html += `<div class="user-list-item">
+                        <div style="flex:1;cursor:pointer;" onclick="viewUserProfile(${user.id})">
+                            <div style="display:flex;align-items:center;gap:10px;">
+                                ${user.profilePic ? `<img src="${user.profilePic}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;">` : `<div class="user-avatar" style="width:40px;height:40px;">${user.nickname.charAt(0).toUpperCase()}</div>`}
+                                <div>
+                                    <strong>${user.nickname}</strong>
+                                    ${user.isAdmin ? '<span style="background:#ff4444;color:white;padding:2px 6px;border-radius:4px;font-size:0.7em;margin-left:5px;">ADMIN</span>' : ''}
+                                    ${hasSentReq ? '<div style="color:#FF9800;font-size:0.75em;">Request Sent</div>' : ''}
+                                </div>
+                            </div>
+                        </div>
+                        <div style="display:flex;gap:8px;flex-direction:column;">
+                            ${hasSentReq
+                                ? `<button class="btn-small btn-secondary" disabled>Request Sent</button>`
+                                : `<button class="follow-btn" onclick="toggleFollow(${user.id});loadFriends();">+ Follow</button>`}
+                            <button class="btn-small btn-secondary" onclick="viewUserProfile(${user.id})">View Cards</button>
+                        </div>
+                    </div>`;
+                });
+                html += '</div>';
+            } else if (allFriends.length === 0 && pendingToMe.length === 0) {
+                html += `<div class="empty-state"><div class="empty-state-icon">👥</div><h3>No other users yet</h3><p>Share FlipSid with your friends so they can sign up!</p></div>`;
+            }
+
+            container.innerHTML = html;
+            updateFollowRequestBadge();
+        }
+
+        // ============================================================
+        // USER PROFILE VIEW
+        // ============================================================
+
+        let currentViewingUserId = null;
+
+        function viewUserProfile(userId) {
+            currentViewingUserId = userId;
+            const user = users.find(u => String(u.id) === String(userId));
+            if (!user) return;
+            const userCards = cards.filter(c => String(c.uploadedBy) === String(userId) && c.approved !== false);
+            const modal = document.getElementById('userProfileModal');
+
+            document.getElementById('profileModalNickname').textContent = user.nickname;
+            document.getElementById('profileModalFullName').textContent  = user.fullName || '';
+            document.getElementById('profileModalFlipcoins').textContent = user.flipcoins || 0;
+
+            const picEl = document.getElementById('profileModalPic');
+            if (user.profilePic) { picEl.src = user.profilePic; picEl.style.display='block'; }
+            else picEl.style.display = 'none';
+
+            document.getElementById('profileModalAvatar').textContent = user.profilePic ? '' : user.nickname.charAt(0).toUpperCase();
+            document.getElementById('profileModalCards').innerHTML = userCards.length > 0
+                ? `<div class="cards-grid">${userCards.map(c => renderCard(c, false)).join('')}</div>`
+                : '<p style="color:#999;text-align:center;">No cards uploaded yet</p>';
+
+            modal.classList.add('active');
+        }
+
+        function closeUserProfile() { document.getElementById('userProfileModal').classList.remove('active'); }
+
+        // ============================================================
+        // EDIT PROFILE
+        // ============================================================
+
+        function showEditProfile() {
+            document.getElementById('editProfileNickname').value = currentUser.nickname;
+            document.getElementById('editProfileFullName').value  = currentUser.fullName || '';
+            document.getElementById('editProfileMobile').value    = currentUser.mobile || '';
+            document.getElementById('editProfilePassword').value  = '';
             
-            if (pendingRequestsToMe.length > 0) {
-                badge.textContent = pendingRequestsToMe.length;
-                badge.style.display = 'inline';
+            if (currentUser.profilePic) {
+                document.getElementById('editProfileCurrentPic').src = currentUser.profilePic;
+                document.getElementById('editProfileCurrentPic').style.display = 'block';
+                document.getElementById('editProfilePicPlaceholder').style.display = 'none';
             } else {
-                badge.style.display = 'none';
+                document.getElementById('editProfileCurrentPic').style.display = 'none';
+                document.getElementById('editProfilePicPlaceholder').style.display = 'flex';
+                document.getElementById('editProfilePicPlaceholder').textContent = currentUser.nickname.charAt(0).toUpperCase();
+            }
+            
+            document.getElementById('editProfileModal').classList.add('active');
+        }
+
+        function closeEditProfile() { document.getElementById('editProfileModal').classList.remove('active'); }
+
+        async function saveProfile() {
+            const newNickname = document.getElementById('editProfileNickname').value.trim();
+            const newFullName = document.getElementById('editProfileFullName').value.trim();
+            const newMobile   = document.getElementById('editProfileMobile').value.trim();
+            const newPassword = document.getElementById('editProfilePassword').value;
+            const picInput    = document.getElementById('editProfilePicInput');
+
+            if (!newNickname) { alert('Nickname cannot be empty!'); return; }
+            if (users.find(u => u.nickname === newNickname && String(u.id) !== String(currentUser.id))) {
+                alert('Nickname already taken!'); return;
+            }
+
+            const user = users.find(u => String(u.id) === String(currentUser.id));
+            if (!user) return;
+
+            user.nickname  = newNickname;
+            user.fullName  = newFullName;
+            user.mobile    = newMobile;
+            if (newPassword && newPassword.length >= 4) user.password = newPassword;
+
+            if (picInput && picInput.files[0]) {
+                const reader = new FileReader();
+                reader.onload = async (ev) => {
+                    user.profilePic = await compressImage(ev.target.result);
+                    currentUser = {...user};
+                    await saveUser(user);
+                    localStorage.setItem('flipsidCurrentUser', JSON.stringify(currentUser));
+                    showDashboard();
+                    closeEditProfile();
+                };
+                reader.readAsDataURL(picInput.files[0]);
+                return;
+            }
+
+            currentUser = {...user};
+            await saveUser(user);
+            localStorage.setItem('flipsidCurrentUser', JSON.stringify(currentUser));
+            showDashboard();
+            closeEditProfile();
+        }
+
+        // ============================================================
+        // CLUBS & TYPES
+        // ============================================================
+
+        function populateClubsDropdown() {
+            const sel = document.getElementById('team');
+            if (!sel) return;
+            sel.innerHTML = '<option value="">Select Team...</option>' +
+                approvedClubs.map(c => `<option value="${c.name}">${c.icon || ''} ${c.name}</option>`).join('');
+        }
+
+        function handleClubSelect(sel) {
+            const club = approvedClubs.find(c => c.name === sel.value);
+            document.getElementById('clubIconDisplay').textContent = club ? club.icon : '';
+        }
+
+        function populateTypesDropdown() {
+            const sel = document.getElementById('cardType');
+            if (!sel) return;
+            sel.innerHTML = '<option value="">Select Type...</option>' +
+                approvedTypes.map(t => `<option value="${t}">${t}</option>`).join('');
+        }
+
+        function handleTypeSelect(sel) {}
+
+        function loadClubsList() {
+            const container = document.getElementById('clubsList');
+            if (!container) return;
+            container.innerHTML = approvedClubs.map((c, i) => `
+                <div style="display:flex;align-items:center;gap:10px;padding:10px;background:white;border-radius:8px;border:2px solid #ffd93d;margin-bottom:8px;">
+                    <span style="font-size:1.5em;">${c.icon || '⚽'}</span>
+                    <span style="flex:1;font-weight:bold;">${c.name}</span>
+                    <button class="btn-edit" onclick="openEditClubModal(${i})" style="width:auto;padding:4px 10px;">Edit</button>
+                    <button class="btn-reject" onclick="removeClub(${i})" style="width:auto;padding:4px 10px;">Remove</button>
+                </div>`).join('') || '<p style="color:#999;">No clubs yet</p>';
+        }
+
+        async function addClub() {
+            const name = document.getElementById('newClubName').value.trim();
+            const icon = document.getElementById('newClubIcon').value.trim();
+            if (!name) { alert('Enter a club name'); return; }
+            if (approvedClubs.find(c => c.name === name)) { alert('Club already exists'); return; }
+            approvedClubs.push({name, icon: icon || '⚽'});
+            await saveMeta();
+            loadClubsList();
+            populateClubsDropdown();
+            document.getElementById('newClubName').value = '';
+            document.getElementById('newClubIcon').value = '';
+        }
+
+        function openEditClubModal(index) {
+            const club = approvedClubs[index];
+            if (!club) return;
+            document.getElementById('editClubIndex').value = index;
+            document.getElementById('editClubName').value  = club.name;
+            document.getElementById('editClubIcon').value  = club.icon || '';
+            document.getElementById('editClubModal').classList.add('active');
+        }
+
+        async function saveEditedClub() {
+            const index = parseInt(document.getElementById('editClubIndex').value);
+            const club  = approvedClubs[index];
+            if (!club) return;
+            
+            const newName = document.getElementById('editClubName').value.trim();
+            const newIcon = document.getElementById('editClubIcon').value.trim();
+            
+            if (!newName) { alert('Club name cannot be empty'); return; }
+            if (approvedClubs.find((c, i) => c.name === newName && i !== index)) {
+                alert('Club name already exists'); return;
+            }
+            
+            club.name = newName;
+            club.icon = newIcon || '⚽';
+            
+            await saveMeta();
+            document.getElementById('editClubModal').classList.remove('active');
+            loadClubsList();
+            populateClubsDropdown();
+        }
+
+        async function removeClub(index) {
+            if (!confirm('Remove this club?')) return;
+            approvedClubs.splice(index, 1);
+            await saveMeta();
+            loadClubsList();
+            populateClubsDropdown();
+        }
+
+        function loadTypesList() {
+            const container = document.getElementById('typesList');
+            if (!container) return;
+            container.innerHTML = approvedTypes.map((t, i) => `
+                <div style="display:flex;align-items:center;gap:10px;padding:10px;background:white;border-radius:8px;border:2px solid #ffd93d;margin-bottom:8px;">
+                    <span style="flex:1;font-weight:bold;">🏷️ ${t}</span>
+                    <button class="btn-reject" onclick="removeType(${i})" style="width:auto;padding:4px 10px;">Remove</button>
+                </div>`).join('') || '<p style="color:#999;">No types yet</p>';
+        }
+
+        async function addCardType() {
+            const type = document.getElementById('newCardType').value.trim();
+            if (!type) { alert('Enter a card type'); return; }
+            if (approvedTypes.includes(type)) { alert('Type already exists'); return; }
+            approvedTypes.push(type);
+            await saveMeta();
+            loadTypesList();
+            populateTypesDropdown();
+            document.getElementById('newCardType').value = '';
+        }
+
+        async function removeType(index) {
+            if (!confirm('Remove this type?')) return;
+            approvedTypes.splice(index, 1);
+            await saveMeta();
+            loadTypesList();
+            populateTypesDropdown();
+        }
+
+        // ============================================================
+        // SUPER ADMIN
+        // ============================================================
+
+        function loadAdminsList() {
+            const container = document.getElementById('adminsList');
+            if (!container) return;
+            const admins = users.filter(u => u.isAdmin && !u.isSuperAdmin);
+            container.innerHTML = admins.length === 0 ? '<p style="color:#999;">No admins yet</p>' :
+                admins.map(u => `
+                    <div style="display:flex;align-items:center;gap:10px;padding:10px;background:white;border-radius:8px;border:2px solid #9C27B0;margin-bottom:8px;">
+                        <strong style="flex:1;">${u.nickname}</strong>
+                        <button class="btn-reject" onclick="removeAdminRole(${u.id})" style="width:auto;padding:4px 10px;">Remove</button>
+                    </div>`).join('');
+        }
+
+        async function searchAndPromoteUser() {
+            const nick = document.getElementById('searchUserNickname').value.trim();
+            const user = users.find(u => u.nickname.toLowerCase() === nick.toLowerCase() && !u.isSuperAdmin);
+            if (!user) { alert('User not found'); return; }
+            if (user.isAdmin) { alert('Already an admin'); return; }
+            user.isAdmin = true;
+            await saveUser(user);
+            loadAdminsList();
+            renderAdminUsers();
+            alert(`${user.nickname} is now an admin! 🎉`);
+        }
+
+        // ============================================================
+        // FILTER OPTIONS
+        // ============================================================
+
+        function updateFilterOptions() {
+            const clubSel = document.getElementById('filterClub');
+            const typeSel = document.getElementById('filterType');
+            if (clubSel) {
+                clubSel.innerHTML = '<option value="">All Teams</option>' +
+                    approvedClubs.map(c => `<option value="${c.name}">${c.icon || ''} ${c.name}</option>`).join('');
+            }
+            if (typeSel) {
+                typeSel.innerHTML = '<option value="">All Types</option>' +
+                    approvedTypes.map(t => `<option value="${t}">${t}</option>`).join('');
             }
         }
 
-        function renderUserCard(card, userId) {
-            const interactions = cardInteractions[card.id] || {likes: [], owns: [], wants: []};
-            const userLiked = interactions.likes.includes(userId);
-            const userOwns = interactions.owns.includes(userId);
-            const userWants = interactions.wants.includes(userId);
+        // ============================================================
+        // BOOT
+        // ============================================================
 
-            let actionTagsHtml = '<div class="action-tags">';
-            if (userLiked) actionTagsHtml += '<span class="action-tag liked">❤️ Loved</span>';
-            if (userOwns) actionTagsHtml += '<span class="action-tag owned">💪 Owned</span>';
-            if (userWants) actionTagsHtml += '<span class="action-tag wanted">🤲 Wanted</span>';
-            actionTagsHtml += '</div>';
-
-            return `
-                <div class="card-item" style="position: relative;">
-                    <div class="card-id-badge">#${card.id}</div>
-                    <div class="sport-icon">⚽</div>
-                    <div class="card-images">
-                        <div class="card-image" onclick="openModal('${card.frontImage || ''}')">
-                            ${card.frontImage ? `<img src="${card.frontImage}" alt="Front">` : `${card.playerName}<br>FRONT`}
-                        </div>
-                        <div class="card-image" onclick="openModal('${card.backImage || ''}')">
-                            ${card.backImage ? `<img src="${card.backImage}" alt="Back">` : `${card.playerName}<br>BACK`}
-                        </div>
-                    </div>
-                    <div class="card-info">
-                        <h3>${card.playerName}</h3>
-                        <div class="card-detail"><strong>Team:</strong><span>${card.team} ${card.clubIcon || ''}</span></div>
-                        <div class="card-detail"><strong>Type:</strong><span>${card.cardType}</span></div>
-                        <div class="card-detail"><strong>Company:</strong><span>${card.company}</span></div>
-                        ${card.tags && card.tags.length > 0 ? '<div class="tags">' + card.tags.map(tag => `<span class="tag ${tag.toLowerCase()}">${tag}</span>`).join('') + '</div>' : ''}
-                        ${actionTagsHtml}
-                    </div>
-                </div>
-            `;
-        }
+        window.onload = async function() {
+            await loadAllData();
+            checkAuth();
+        };
     </script>
 
     <!-- Edit User Modal -->
@@ -3585,12 +3192,25 @@
             <h2 style="color:#ffaf00; margin-bottom:20px;">✏️ Edit User</h2>
             <input type="hidden" id="editUserModalId">
             <div class="form-group">
-                <label>Nickname</label>
-                <input type="text" id="editUserModalNickname">
+                <label>Profile Picture</label>
+                <div style="display:flex; gap:10px; align-items:center;">
+                    <img id="editUserModalPic" style="width:60px; height:60px; border-radius:50%; object-fit:cover; display:none;">
+                    <div id="editUserModalPicPlaceholder" class="user-avatar" style="width:60px; height:60px; font-size:1.2em; cursor:pointer;"></div>
+                    <button type="button" class="btn-small" onclick="document.getElementById('editUserModalPicInput').click()">Choose Photo</button>
+                </div>
+                <input type="file" id="editUserModalPicInput" accept="image/*" style="display:none;" onchange="previewProfilePic(this, 'editUserModalPic', 'editUserModalPicPlaceholder')">
             </div>
             <div class="form-group">
                 <label>Full Name</label>
                 <input type="text" id="editUserModalFullName">
+            </div>
+            <div class="form-group">
+                <label>Nickname</label>
+                <input type="text" id="editUserModalNickname">
+            </div>
+            <div class="form-group">
+                <label>Mobile</label>
+                <input type="text" id="editUserModalMobile" placeholder="Optional">
             </div>
             <div style="display:flex; gap:10px; margin-top:20px;">
                 <button class="btn" onclick="saveEditedUser()">Save Changes</button>
@@ -3613,6 +3233,26 @@
             <div style="display:flex; gap:10px; margin-top:20px;">
                 <button class="btn" style="background:linear-gradient(135deg,#9C27B0,#7B1FA2);" onclick="saveResetPassword()">Set Password</button>
                 <button class="btn btn-secondary" onclick="document.getElementById('resetPasswordModal').classList.remove('active')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Club Modal -->
+    <div id="editClubModal" class="modal">
+        <div class="edit-modal-content" onclick="event.stopPropagation()">
+            <h2 style="color:#ffaf00; margin-bottom:20px;">✏️ Edit Club</h2>
+            <input type="hidden" id="editClubIndex">
+            <div class="form-group">
+                <label>Club Name</label>
+                <input type="text" id="editClubName">
+            </div>
+            <div class="form-group">
+                <label>Club Icon (emoji)</label>
+                <input type="text" id="editClubIcon" placeholder="e.g. ⚽ 💙 ❤️">
+            </div>
+            <div style="display:flex; gap:10px; margin-top:20px;">
+                <button class="btn" onclick="saveEditedClub()">Save Changes</button>
+                <button class="btn btn-secondary" onclick="document.getElementById('editClubModal').classList.remove('active')">Cancel</button>
             </div>
         </div>
     </div>
