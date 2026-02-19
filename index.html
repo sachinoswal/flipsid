@@ -1167,6 +1167,10 @@
                         <span style="color: white; margin-left: 5px;">(💰 <span id="headerFlipcoins">0</span>)</span>
                         <span id="adminBadge" class="admin-badge hidden">ADMIN</span>
                     </span>
+                    <button onclick="toggleNotifications()" style="position:relative; background:rgba(255,255,255,0.2); color:white; border:2px solid white; padding:8px 12px; border-radius:8px; font-weight:bold; cursor:pointer; font-size:1.2em;">
+                        🔔
+                        <span id="notificationBadge" class="notification-badge" style="display:none; position:absolute; top:-5px; right:-5px;"></span>
+                    </button>
                     <button id="adminPageBtn" class="admin-header-btn hidden" onclick="showAdminPage()">⚙️ Admin</button>
                     <button onclick="showEditProfile()" style="background:rgba(255,255,255,0.2); color:white; border:2px solid white; padding:8px 16px; border-radius:8px; font-weight:bold; cursor:pointer;">Edit Profile</button>
                     <button onclick="logout()" style="background:rgba(255,255,255,0.2); color:white; border:2px solid white; padding:8px 16px; border-radius:8px; font-weight:bold; cursor:pointer;">Logout</button>
@@ -1623,11 +1627,11 @@
             
             <div class="filter-section">
                 <h3 style="color: #ffaf00; margin-bottom: 15px;">Filter Cards</h3>
-                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                    <button class="btn-small action-tag liked" onclick="filterUserCards('liked')">❤️ Loved</button>
-                    <button class="btn-small action-tag owned" onclick="filterUserCards('owned')">💪 Owned</button>
-                    <button class="btn-small action-tag wanted" onclick="filterUserCards('wanted')">🤲 Wanted</button>
-                    <button class="btn-small btn-secondary" onclick="filterUserCards('all')">Show All</button>
+                <div id="userProfileFilters" style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <button class="filter-btn btn-small active" onclick="filterUserCards('all')">Show All</button>
+                    <button class="filter-btn btn-small action-tag liked" onclick="filterUserCards('liked')">❤️ Loved</button>
+                    <button class="filter-btn btn-small action-tag owned" onclick="filterUserCards('owned')">💪 Owned</button>
+                    <button class="filter-btn btn-small action-tag wanted" onclick="filterUserCards('wanted')">🤲 Wanted</button>
                 </div>
             </div>
 
@@ -1706,7 +1710,9 @@
         let approvedClubs = [];
         let approvedTypes = [];
         let currentYourCardsFilter = 'all';
+        let currentUserProfileFilter = 'all';
         let trades = [];  // All active trades
+        let notifications = [];  // User notifications
 
         // ── READ ─────────────────────────────────────────────────────
 
@@ -1721,7 +1727,7 @@
                 if (statusEl) statusEl.innerHTML = '🔄 Connecting...';
 
                 const [usersSnap, cardsSnap, pendingSnap, interactionsSnap,
-                       followsSnap, clubsDoc, typesDoc, tradesSnap] = await Promise.all([
+                       followsSnap, clubsDoc, typesDoc, tradesSnap, notificationsSnap] = await Promise.all([
                     db.collection('users').get(),
                     db.collection('cards').get(),
                     db.collection('pendingCards').get(),
@@ -1729,7 +1735,8 @@
                     db.collection('follows').get(),
                     db.collection('meta').doc('approvedClubs').get(),
                     db.collection('meta').doc('approvedTypes').get(),
-                    db.collection('trades').get()
+                    db.collection('trades').get(),
+                    db.collection('notifications').get()
                 ]);
 
                 users            = usersSnap.docs.map(d => d.data());
@@ -1743,6 +1750,7 @@
                 approvedTypes    = typesDoc.exists  ? typesDoc.data().list  : [];
                 followRequests   = buildFollowRequests();
                 trades           = tradesSnap.docs.map(d => d.data());
+                notifications    = notificationsSnap.docs.map(d => d.data());
 
                 console.log('📊 Data loaded from Firebase:');
                 console.log('Cards loaded:', cards);
@@ -1983,6 +1991,7 @@
             loadBrowseCards();
             updateFollowRequestBadge();
             updateTradesBadge();
+            updateNotificationBadge();
         }
 
         function showAdminPage() {
@@ -2259,6 +2268,7 @@
 
             document.getElementById('tradeRequestedCard').value = cardId;
             document.getElementById('tradeRecipient').value = card.uploadedBy;
+            document.getElementById('counterTradeId').value = ''; // Clear for new offer
             document.getElementById('tradeMessage').value = '';
 
             // Show user's owned cards
@@ -2296,12 +2306,18 @@
 
         function closeTradeOfferModal() {
             document.getElementById('tradeOfferModal').classList.remove('active');
+            document.getElementById('counterTradeId').value = '';
+            // Reset modal title
+            const modal = document.getElementById('tradeOfferModal');
+            const modalTitle = modal.querySelector('h2');
+            modalTitle.textContent = '🤝 Offer Trade';
         }
 
         async function sendTradeOffer() {
             const requestedCardId = document.getElementById('tradeRequestedCard').value;
             const recipientId = document.getElementById('tradeRecipient').value;
             const message = document.getElementById('tradeMessage').value.trim();
+            const counterTradeId = document.getElementById('counterTradeId').value;
             
             const selectedCards = Array.from(document.querySelectorAll('.trade-offer-checkbox:checked')).map(cb => parseInt(cb.value));
             
@@ -2310,26 +2326,52 @@
                 return;
             }
 
-            const tradeId = await getNextTradeId();
-            const trade = {
-                id: tradeId,
-                initiator: currentUser.id,
-                recipient: parseInt(recipientId),
-                initiatorOffers: selectedCards,
-                recipientOffers: [parseInt(requestedCardId)],
-                status: 'pending',
-                initiatorConfirmed: false,
-                recipientConfirmed: false,
-                message: message,
-                lastUpdatedBy: currentUser.id,
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-            };
+            if (counterTradeId) {
+                // This is a counter-offer - update existing trade
+                const trade = trades.find(t => String(t.id) === String(counterTradeId));
+                if (!trade) return;
+                
+                const uid = String(currentUser.id);
+                const isInitiator = String(trade.initiator) === uid;
+                
+                // Update the offers
+                if (isInitiator) {
+                    trade.initiatorOffers = selectedCards;
+                } else {
+                    trade.recipientOffers = selectedCards;
+                }
+                
+                trade.message = message || trade.message;
+                trade.lastUpdatedBy = currentUser.id;
+                trade.updatedAt = new Date().toISOString();
+                
+                await saveTrade(trade);
+                closeTradeOfferModal();
+                alert('Counter-offer sent! 🔄');
+                loadTrades();
+            } else {
+                // New trade offer
+                const tradeId = await getNextTradeId();
+                const trade = {
+                    id: tradeId,
+                    initiator: currentUser.id,
+                    recipient: parseInt(recipientId),
+                    initiatorOffers: selectedCards,
+                    recipientOffers: [parseInt(requestedCardId)],
+                    status: 'pending',
+                    initiatorConfirmed: false,
+                    recipientConfirmed: false,
+                    message: message,
+                    lastUpdatedBy: currentUser.id,
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString()
+                };
 
-            await saveTrade(trade);
-            closeTradeOfferModal();
-            alert('Trade offer sent! 🤝');
-            if (currentTradeView === 'outgoing') loadTrades();
+                await saveTrade(trade);
+                closeTradeOfferModal();
+                alert('Trade offer sent! 🤝');
+                if (currentTradeView === 'outgoing') loadTrades();
+            }
         }
 
         function openTradeDetailsModal(tradeId) {
@@ -2460,7 +2502,60 @@
         }
 
         function counterTrade(tradeId) {
-            alert('Counter-offer feature coming soon! For now, you can reject and ask them to make a new offer.');
+            const trade = trades.find(t => String(t.id) === String(tradeId));
+            if (!trade) return;
+            
+            const uid = String(currentUser.id);
+            const isInitiator = String(trade.initiator) === uid;
+            
+            // Close details modal
+            closeTradeDetailsModal();
+            
+            // Open counter-offer modal showing their current offer
+            document.getElementById('tradeRequestedCard').value = trade.recipientOffers[0]; // Placeholder
+            document.getElementById('tradeRecipient').value = isInitiator ? trade.recipient : trade.initiator;
+            document.getElementById('counterTradeId').value = tradeId;
+            document.getElementById('tradeMessage').value = '';
+            
+            // Show owned cards to select for counter-offer
+            const ownedCards = cards.filter(c => {
+                const ix = cardInteractions[String(c.id)] || {};
+                return ix.owns && ix.owns.map(String).includes(uid);
+            });
+            
+            const container = document.getElementById('tradeOfferCardsList');
+            if (ownedCards.length === 0) {
+                container.innerHTML = '<p style="color:#999;">You don\'t own any cards yet to trade.</p>';
+            } else {
+                // Pre-select the cards they're currently offering
+                const currentOffer = isInitiator ? trade.initiatorOffers : trade.recipientOffers;
+                
+                container.innerHTML = ownedCards.map(c => {
+                    const club = approvedClubs.find(cl => cl.name === c.team);
+                    const clubIconHtml = club?.icon ? `<img src="${club.icon}" style="width:16px;height:16px;border-radius:3px;object-fit:cover;vertical-align:middle;">` : '';
+                    const isChecked = currentOffer.includes(c.id);
+                    
+                    return `
+                        <div style="display:flex; align-items:center; gap:10px; padding:10px; border:2px solid #ffd93d; border-radius:8px; margin-bottom:8px;">
+                            <input type="checkbox" class="trade-offer-checkbox" value="${c.id}" ${isChecked ? 'checked' : ''} style="width:20px; height:20px;">
+                            <div class="card-image" style="width:50px; height:70px; font-size:0.5em;" onclick="openModal('${c.frontImage || ''}')">
+                                ${c.frontImage ? `<img src="${c.frontImage}" alt="Front">` : 'FRONT'}
+                            </div>
+                            <div style="flex:1;">
+                                <div style="font-weight:bold;">${c.playerName}</div>
+                                <div style="color:#999; font-size:0.85em;">${c.team} ${clubIconHtml} · ${c.cardType}</div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            }
+            
+            // Change button text to "Send Counter-Offer"
+            const modal = document.getElementById('tradeOfferModal');
+            const modalTitle = modal.querySelector('h2');
+            modalTitle.textContent = '🔄 Counter-Offer';
+            
+            modal.classList.add('active');
         }
 
         async function confirmExchange(tradeId) {
@@ -2534,6 +2629,121 @@
             } else {
                 badge.style.display = 'none';
             }
+        }
+
+        // ============================================================
+        // NOTIFICATIONS
+        // ============================================================
+
+        async function createNotification(userId, type, message, relatedId = null, fromUserId = null) {
+            const notif = {
+                id: Date.now(),
+                userId: parseInt(userId),
+                type: type,
+                message: message,
+                relatedId: relatedId,
+                fromUser: fromUserId,
+                read: false,
+                createdAt: new Date().toISOString()
+            };
+            
+            notifications.push(notif);
+            localStorage.setItem('flipsidNotifications', JSON.stringify(notifications));
+            if (!useFirebase) return;
+            try { await db.collection('notifications').doc(String(notif.id)).set(notif); }
+            catch(e) { console.log('createNotification error:', e); }
+            
+            updateNotificationBadge();
+        }
+
+        function toggleNotifications() {
+            document.getElementById('notificationsModal').classList.add('active');
+            loadNotifications();
+        }
+
+        function closeNotifications() {
+            document.getElementById('notificationsModal').classList.remove('active');
+        }
+
+        function loadNotifications() {
+            const uid = String(currentUser.id);
+            const myNotifs = notifications
+                .filter(n => String(n.userId) === uid)
+                .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+            
+            const container = document.getElementById('notificationsContent');
+            
+            if (myNotifs.length === 0) {
+                container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🔔</div><h3>No notifications</h3><p>You\'re all caught up!</p></div>';
+                return;
+            }
+            
+            container.innerHTML = myNotifs.map(n => {
+                const fromUser = n.fromUser ? users.find(u => String(u.id) === String(n.fromUser)) : null;
+                const timeAgo = getTimeAgo(n.createdAt);
+                
+                return `
+                    <div class="user-list-item" style="${n.read ? 'opacity:0.6;' : 'border-left:4px solid #ffaf00;'}">
+                        <div style="flex:1;">
+                            <div style="font-weight:${n.read ? 'normal' : 'bold'};">${n.message}</div>
+                            <div style="color:#999; font-size:0.8em; margin-top:4px;">${timeAgo}</div>
+                        </div>
+                        ${!n.read ? `<button class="btn-small" onclick="markAsRead(${n.id}); event.stopPropagation();">Mark Read</button>` : ''}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function markAsRead(notifId) {
+            const notif = notifications.find(n => n.id === notifId);
+            if (!notif) return;
+            notif.read = true;
+            localStorage.setItem('flipsidNotifications', JSON.stringify(notifications));
+            if (useFirebase) {
+                try { await db.collection('notifications').doc(String(notifId)).update({ read: true }); }
+                catch(e) { console.log('markAsRead error:', e); }
+            }
+            loadNotifications();
+            updateNotificationBadge();
+        }
+
+        async function markAllAsRead() {
+            const uid = String(currentUser.id);
+            const myNotifs = notifications.filter(n => String(n.userId) === uid && !n.read);
+            
+            for (const notif of myNotifs) {
+                notif.read = true;
+                if (useFirebase) {
+                    try { await db.collection('notifications').doc(String(notif.id)).update({ read: true }); }
+                    catch(e) { console.log('markAllAsRead error:', e); }
+                }
+            }
+            
+            localStorage.setItem('flipsidNotifications', JSON.stringify(notifications));
+            loadNotifications();
+            updateNotificationBadge();
+        }
+
+        function updateNotificationBadge() {
+            const uid = String(currentUser.id);
+            const unread = notifications.filter(n => String(n.userId) === uid && !n.read).length;
+            
+            const badge = document.getElementById('notificationBadge');
+            if (unread > 0) {
+                badge.textContent = unread;
+                badge.style.display = 'inline-block';
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+
+        function getTimeAgo(dateString) {
+            const seconds = Math.floor((new Date() - new Date(dateString)) / 1000);
+            if (seconds < 60) return 'Just now';
+            if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
+            if (seconds < 86400) return Math.floor(seconds / 3600) + 'h ago';
+            if (seconds < 604800) return Math.floor(seconds / 86400) + 'd ago';
+            return new Date(dateString).toLocaleDateString();
         }
 
         // ============================================================
@@ -2804,14 +3014,16 @@
                         ${uploaderHtml}
                     </div>
                     ${showActions ? `
-                    <div class="card-actions">
-                        ${canTradeCard(card) && !owned ? `<button class="btn-small" onclick="openTradeOfferModal(${card.id})" style="background:linear-gradient(135deg,#4CAF50,#2196F3);">🤝 Trade</button>` : ''}
-                        <button class="btn-small ${owned  ? 'btn-active' : ''}" onclick="toggleOwn(${card.id})"  ${wanted ? 'disabled style="opacity:0.4;"' : ''}>
-                            ${owned  ? '💪 Own ✓' : '💪 Own'}
-                        </button>
-                        <button class="btn-small ${wanted ? 'btn-active' : ''}" onclick="toggleWant(${card.id})" ${owned  ? 'disabled style="opacity:0.4;"' : ''}>
-                            ${wanted ? '🤲 Want ✓' : '🤲 Want'}
-                        </button>
+                    <div class="card-actions" style="display:flex; flex-direction:column; gap:8px;">
+                        <div style="display:flex; gap:8px;">
+                            <button class="btn-small ${owned  ? 'btn-active' : ''}" onclick="toggleOwn(${card.id})"  ${wanted ? 'disabled style="opacity:0.4;"' : ''}>
+                                ${owned  ? '💪 Own ✓' : '💪 Own'}
+                            </button>
+                            <button class="btn-small ${wanted ? 'btn-active' : ''}" onclick="toggleWant(${card.id})" ${owned  ? 'disabled style="opacity:0.4;"' : ''}>
+                                ${wanted ? '🤲 Want ✓' : '🤲 Want'}
+                            </button>
+                        </div>
+                        ${canTradeCard(card) && !owned && wanted ? `<button class="btn-small" onclick="openTradeOfferModal(${card.id})" style="background:linear-gradient(135deg,#4CAF50,#2196F3); width:100%;">🤝 Trade</button>` : ''}
                     </div>` : ''}
                 </div>`;
         }
@@ -3491,13 +3703,12 @@
 
         function viewUserProfile(userId) {
             currentViewingUserId = userId;
+            currentUserProfileFilter = 'all'; // Reset filter
             const user = users.find(u => String(u.id) === String(userId));
             if (!user) return;
-            const userCards = cards.filter(c => String(c.uploadedBy) === String(userId) && c.approved !== false);
-            const modal = document.getElementById('userProfileModal');
-
+            
             document.getElementById('viewUserNickname').textContent = user.nickname;
-            document.getElementById('viewUserStats').textContent = `${user.fullName || ''} • ${userCards.length} cards • 💰 ${user.flipcoins || 0} FlipCoins`;
+            document.getElementById('viewUserStats').textContent = `${user.fullName || ''} • 💰 ${user.flipcoins || 0} FlipCoins`;
 
             const picEl = document.getElementById('viewUserProfilePic');
             const placeholderEl = document.getElementById('viewUserProfilePlaceholder');
@@ -3511,11 +3722,53 @@
                 placeholderEl.textContent = user.nickname.charAt(0).toUpperCase();
             }
 
-            document.getElementById('userProfileCards').innerHTML = userCards.length > 0
-                ? `<div class="cards-grid">${userCards.map(c => renderCard(c, false)).join('')}</div>`
-                : '<p style="color:#999;text-align:center;">No cards uploaded yet</p>';
+            // Reset filter buttons
+            document.querySelectorAll('#userProfileFilters .filter-btn').forEach(b => b.classList.remove('active'));
+            document.querySelector('#userProfileFilters .filter-btn').classList.add('active');
+            
+            loadUserProfileCards();
+            document.getElementById('userProfileModal').classList.add('active');
+        }
 
-            modal.classList.add('active');
+        function filterUserCards(filter) {
+            currentUserProfileFilter = filter;
+            document.querySelectorAll('#userProfileFilters .filter-btn').forEach(b => b.classList.remove('active'));
+            event.target.classList.add('active');
+            loadUserProfileCards();
+        }
+
+        function loadUserProfileCards() {
+            const userId = currentViewingUserId;
+            const filter = currentUserProfileFilter || 'all';
+            const user = users.find(u => String(u.id) === String(userId));
+            if (!user) return;
+            
+            const userCards = cards.filter(c => String(c.uploadedBy) === String(userId) && c.approved !== false);
+            const uid = String(currentUser.id);
+            
+            let filtered = userCards;
+            
+            if (filter === 'liked') {
+                filtered = userCards.filter(c => {
+                    const ix = cardInteractions[String(c.id)] || {};
+                    return ix.likes && ix.likes.map(String).includes(uid);
+                });
+            } else if (filter === 'owned') {
+                filtered = userCards.filter(c => {
+                    const ix = cardInteractions[String(c.id)] || {};
+                    return ix.owns && ix.owns.map(String).includes(uid);
+                });
+            } else if (filter === 'wanted') {
+                filtered = userCards.filter(c => {
+                    const ix = cardInteractions[String(c.id)] || {};
+                    return ix.wants && ix.wants.map(String).includes(uid);
+                });
+            }
+            
+            const container = document.getElementById('userProfileCards');
+            container.innerHTML = filtered.length > 0
+                ? `<div class="cards-grid">${filtered.map(c => renderCard(c, false)).join('')}</div>`
+                : '<p style="color:#999;text-align:center;">No cards match this filter</p>';
         }
 
         function closeUserProfile() { document.getElementById('userProfileModal').classList.remove('active'); }
@@ -3919,6 +4172,7 @@
             <h2 style="color:#ffaf00; margin-bottom:20px;">🤝 Offer Trade</h2>
             <input type="hidden" id="tradeRequestedCard">
             <input type="hidden" id="tradeRecipient">
+            <input type="hidden" id="counterTradeId">
             
             <p style="color:#666; margin-bottom:15px;">Select cards from your collection to offer:</p>
             
@@ -3941,6 +4195,17 @@
         <div class="edit-modal-content" onclick="event.stopPropagation()" style="max-width:800px;">
             <h2 style="color:#ffaf00; margin-bottom:20px;">🤝 Trade Details</h2>
             <div id="tradeDetailsContent"></div>
+        </div>
+    </div>
+
+    <!-- Notifications Modal -->
+    <div id="notificationsModal" class="modal" onclick="closeNotifications()">
+        <div class="edit-modal-content" onclick="event.stopPropagation()" style="max-width:600px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                <h2 style="color:#ffaf00; margin:0;">🔔 Notifications</h2>
+                <button class="btn-small btn-secondary" onclick="markAllAsRead()">Mark All Read</button>
+            </div>
+            <div id="notificationsContent" style="max-height:60vh; overflow-y:auto;"></div>
         </div>
     </div>
 
@@ -3970,7 +4235,7 @@
         border-radius: 12px;
         font-size: 0.75em;
         z-index: 9999;
-    ">v1.2.2</div>
+    ">v1.3.1</div>
 
 </body>
 </html>
