@@ -2122,16 +2122,30 @@
         
         function canTradeCard(card) {
             const uid = String(currentUser.id);
+            console.log('🔍 Checking trade for card:', card.playerName, 'ID:', card.id);
+            console.log('  Current user:', uid);
+            console.log('  Card owner:', card.uploadedBy);
+            
             // Can't trade your own cards or cards you already own
             const ix = cardInteractions[String(card.id)] || {};
+            console.log('  Card interactions:', ix);
             const alreadyOwn = ix.owns && ix.owns.map(String).includes(uid);
+            console.log('  Already own?', alreadyOwn);
             if (alreadyOwn) return false;
             
             // Must be mutual friends with card owner
             const cardOwnerId = String(card.uploadedBy);
-            if (cardOwnerId === uid) return false;
+            if (cardOwnerId === uid) {
+                console.log('  ❌ Is your own card');
+                return false;
+            }
             
-            return areMutualFriends(uid, cardOwnerId);
+            const mutual = areMutualFriends(uid, cardOwnerId);
+            console.log('  Mutual friends?', mutual);
+            console.log('  My follows:', follows[uid]);
+            console.log('  Their follows:', follows[cardOwnerId]);
+            
+            return mutual;
         }
 
         async function getNextTradeId() {
@@ -2541,35 +2555,44 @@
         
         async function getNextCardId() {
             if (!useFirebase) {
-                // Offline mode - find max ID and increment
-                const maxId = Math.max(
-                    ...[...cards, ...pendingCards].map(c => parseInt(c.id) || 0),
-                    0
-                );
+                // Offline mode - find max reasonable ID (skip timestamps)
+                const allCardIds = [...cards, ...pendingCards]
+                    .map(c => parseInt(c.id) || 0)
+                    .filter(id => id < 1000000); // Skip timestamp IDs
+                const maxId = allCardIds.length > 0 ? Math.max(...allCardIds) : 0;
                 return maxId + 1;
             }
             
-            // Use Firestore counter for auto-increment IDs
+            // Use Firestore counter
             const counterRef = db.collection('meta').doc('cardCounter');
             
             try {
-                const result = await db.runTransaction(async (transaction) => {
-                    const doc = await transaction.get(counterRef);
-                    let nextId = 1;
-                    
-                    if (doc.exists) {
-                        nextId = (doc.data().value || 0) + 1;
-                    }
-                    
-                    transaction.set(counterRef, { value: nextId });
-                    return nextId;
-                });
+                const doc = await counterRef.get();
+                let nextId;
                 
-                return result;
+                if (!doc.exists) {
+                    // First time - initialize counter from existing cards (excluding timestamps)
+                    const allCardIds = [...cards, ...pendingCards]
+                        .map(c => parseInt(c.id) || 0)
+                        .filter(id => id < 1000000); // Skip timestamp IDs
+                    const maxId = allCardIds.length > 0 ? Math.max(...allCardIds) : 0;
+                    nextId = maxId + 1;
+                    await counterRef.set({ value: nextId });
+                } else {
+                    // Increment existing counter
+                    nextId = (doc.data().value || 0) + 1;
+                    await counterRef.update({ value: nextId });
+                }
+                
+                return nextId;
             } catch(e) {
                 console.error('Error getting next card ID:', e);
-                // Fallback to timestamp if transaction fails
-                return Date.now();
+                // Fallback to simple increment
+                const allCardIds = [...cards, ...pendingCards]
+                    .map(c => parseInt(c.id) || 0)
+                    .filter(id => id < 1000000);
+                const maxId = allCardIds.length > 0 ? Math.max(...allCardIds) : 0;
+                return maxId + 1;
             }
         }
 
@@ -2644,7 +2667,7 @@
                 if (clubIconEl) { clubIconEl.innerHTML = ''; clubIconEl.dataset.icon = ''; }
             } catch(err) {
                 console.error('Upload error:', err);
-                alert('Upload failed, please try again.');
+                alert('Upload failed: ' + (err.message || 'Please try again'));
             } finally {
                 submitBtn.textContent = 'Submit Card for Review';
                 submitBtn.disabled = false;
@@ -2662,6 +2685,14 @@
                 return;
             }
             const approved = cards.filter(c => c.approved !== false);
+            
+            // Sort by most loved (highest likes count first)
+            approved.sort((a, b) => {
+                const aLikes = (cardInteractions[String(a.id)]?.likes || []).length;
+                const bLikes = (cardInteractions[String(b.id)]?.likes || []).length;
+                return bLikes - aLikes; // descending order
+            });
+            
             console.log('Total cards:', cards.length);
             console.log('Approved cards:', approved.length);
             console.log('Cards data:', cards);
@@ -2687,6 +2718,13 @@
             if (clubF) filtered = filtered.filter(c => c.team === clubF);
             if (typeF) filtered = filtered.filter(c => c.cardType === typeF);
             if (companyF) filtered = filtered.filter(c => c.company === companyF);
+
+            // Sort by most loved (highest likes count first)
+            filtered.sort((a, b) => {
+                const aLikes = (cardInteractions[String(a.id)]?.likes || []).length;
+                const bLikes = (cardInteractions[String(b.id)]?.likes || []).length;
+                return bLikes - aLikes;
+            });
 
             const container = document.getElementById('browseCardsList');
             if (!container) return;
@@ -3929,7 +3967,7 @@
         border-radius: 12px;
         font-size: 0.75em;
         z-index: 9999;
-    ">v1.1.4</div>
+    ">v1.1.9</div>
 
 </body>
 </html>
