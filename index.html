@@ -2117,40 +2117,22 @@
         function areMutualFriends(userId1, userId2) {
             const user1Following = follows[String(userId1)]?.following || [];
             const user2Following = follows[String(userId2)]?.following || [];
-            console.log('  👥 Checking mutual friends:');
-            console.log('    User1 (' + userId1 + ') following:', user1Following);
-            console.log('    User2 (' + userId2 + ') following:', user2Following);
-            console.log('    Does user1 follow user2?', user1Following.map(String).includes(String(userId2)));
-            console.log('    Does user2 follow user1?', user2Following.map(String).includes(String(userId1)));
             return user1Following.map(String).includes(String(userId2)) && user2Following.map(String).includes(String(userId1));
         }
         
         function canTradeCard(card) {
             const uid = String(currentUser.id);
-            console.log('🔍 Checking trade for card:', card.playerName, 'ID:', card.id);
-            console.log('  Current user:', uid);
-            console.log('  Card owner:', card.uploadedBy);
             
             // Can't trade your own cards or cards you already own
             const ix = cardInteractions[String(card.id)] || {};
-            console.log('  Card interactions:', ix);
             const alreadyOwn = ix.owns && ix.owns.map(String).includes(uid);
-            console.log('  Already own?', alreadyOwn);
             if (alreadyOwn) return false;
             
             // Must be mutual friends with card owner
             const cardOwnerId = String(card.uploadedBy);
-            if (cardOwnerId === uid) {
-                console.log('  ❌ Is your own card');
-                return false;
-            }
+            if (cardOwnerId === uid) return false;
             
-            const mutual = areMutualFriends(uid, cardOwnerId);
-            console.log('  Mutual friends?', mutual);
-            console.log('  My follows:', follows[uid]);
-            console.log('  Their follows:', follows[cardOwnerId]);
-            
-            return mutual;
+            return areMutualFriends(uid, cardOwnerId);
         }
 
         async function getNextTradeId() {
@@ -2823,7 +2805,7 @@
                     </div>
                     ${showActions ? `
                     <div class="card-actions">
-                        ${canTradeCard(card) && !owned && !wanted ? `<button class="btn-small" onclick="openTradeOfferModal(${card.id})" style="background:linear-gradient(135deg,#4CAF50,#2196F3);">🤝 Trade</button>` : ''}
+                        ${canTradeCard(card) && !owned ? `<button class="btn-small" onclick="openTradeOfferModal(${card.id})" style="background:linear-gradient(135deg,#4CAF50,#2196F3);">🤝 Trade</button>` : ''}
                         <button class="btn-small ${owned  ? 'btn-active' : ''}" onclick="toggleOwn(${card.id})"  ${wanted ? 'disabled style="opacity:0.4;"' : ''}>
                             ${owned  ? '💪 Own ✓' : '💪 Own'}
                         </button>
@@ -3988,7 +3970,7 @@
         border-radius: 12px;
         font-size: 0.75em;
         z-index: 9999;
-    ">v1.2.1-debug</div>
+    ">v1.2.2</div>
 
 </body>
 </html>
