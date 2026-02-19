@@ -443,6 +443,11 @@
             transform: translateY(-2px);
         }
 
+        .filter-btn.active {
+            border: 3px solid #ff4444;
+            box-shadow: 0 0 0 2px rgba(255, 68, 68, 0.2);
+        }
+
         .btn-secondary {
             background: white;
             color: #ffaf00;
@@ -1400,10 +1405,10 @@
                 <div class="filter-section">
                     <h3 style="color: #ffaf00; margin-bottom: 15px;">Filter Your Cards</h3>
                     <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                        <button class="btn-small action-tag liked" onclick="filterYourCards('liked')">❤️ Loved</button>
-                        <button class="btn-small action-tag owned" onclick="filterYourCards('owned')">💪 Owned</button>
-                        <button class="btn-small action-tag wanted" onclick="filterYourCards('wanted')">🤲 Wanted</button>
-                        <button class="btn-small btn-secondary" onclick="filterYourCards('all')">Show All</button>
+                        <button class="filter-btn btn-small active" onclick="filterYourCards('all')">Show All</button>
+                        <button class="filter-btn btn-small action-tag liked" onclick="filterYourCards('liked')">❤️ Loved</button>
+                        <button class="filter-btn btn-small action-tag owned" onclick="filterYourCards('owned')">💪 Owned</button>
+                        <button class="filter-btn btn-small action-tag wanted" onclick="filterYourCards('wanted')">🤲 Wanted</button>
                     </div>
                 </div>
                 <div id="yourCardsContent"></div>
@@ -1736,7 +1741,6 @@
                 // Cache to localStorage
                 cacheToLocal();
 
-                if (statusEl) { statusEl.innerHTML = '🔥 Firebase connected'; setTimeout(() => statusEl.style.display='none', 3000); }
                 console.log(`✅ Loaded: ${users.length} users, ${cards.length} cards, ${pendingCards.length} pending`);
             } catch(e) {
                 console.log('❌ Firebase load error:', e);
@@ -2096,8 +2100,7 @@
             const teamCustom = document.getElementById('uploadPlayerTeamCustom').value.trim();
             const team = teamSelect === '__custom__' ? teamCustom : teamSelect;
             
-            const clubIconEl = document.getElementById('clubIconDisplay');
-            const clubIcon   = clubIconEl ? (clubIconEl.dataset.icon || '') : '';
+            // Don't store clubIcon on card - we'll look it up dynamically from approvedClubs
             
             // Check if custom type or selected type
             const typeSelect = document.getElementById('uploadCardType').value;
@@ -2130,7 +2133,7 @@
 
                 const card = {
                     id: Date.now(),
-                    playerName, team, clubIcon, cardType, company, tags,
+                    playerName, team, cardType, company, tags,  // NO clubIcon field
                     frontImage, backImage,
                     uploadedBy: currentUser.id,
                     uploaderNickname: currentUser.nickname,
@@ -2145,15 +2148,7 @@
 
                 await savePendingCard(card);
 
-                // Award upload FlipCoin
-                currentUser.flipcoins = (currentUser.flipcoins || 0) + 1;
-                const userInArray = users.find(u => String(u.id) === String(currentUser.id));
-                if (userInArray) userInArray.flipcoins = currentUser.flipcoins;
-                await saveUser(currentUser);
-                document.getElementById('headerFlipcoins').textContent = currentUser.flipcoins;
-                localStorage.setItem('flipsidCurrentUser', JSON.stringify(currentUser));
-
-                alert('Card submitted for review! You earned 1 FlipCoin! 🎉');
+                alert('Card submitted for review! 🎉');
                 e.target.reset();
                 if (frontPreview) frontPreview.innerHTML = '';
                 if (backPreview) backPreview.innerHTML = '';
@@ -2234,6 +2229,12 @@
             const owned  = ix.owns   ? ix.owns.map(String).includes(uid)   : false;
             const wanted = ix.wants  ? ix.wants.map(String).includes(uid)  : false;
 
+            // Look up club icon dynamically from approvedClubs
+            const club = approvedClubs.find(c => c.name === card.team);
+            const clubIconHtml = club && club.icon 
+                ? `<img src="${club.icon}" style="width:20px;height:20px;border-radius:4px;object-fit:cover;margin-left:4px;vertical-align:middle;">` 
+                : '';
+
             const tagsHtml = card.tags && card.tags.length > 0
                 ? '<div class="tags">' + card.tags.map(t => `<span class="tag ${t.toLowerCase()}">${t}</span>`).join('') + '</div>' : '';
             const editBtn = currentUser.isAdmin
@@ -2262,7 +2263,7 @@
                                 ${editBtn}
                             </div>
                         </div>
-                        <div class="card-detail"><strong>Team:</strong><span>${card.team} ${card.clubIcon ? `<img src="${card.clubIcon}" style="width:20px;height:20px;border-radius:4px;object-fit:cover;margin-left:4px;vertical-align:middle;">` : ''}</span></div>
+                        <div class="card-detail"><strong>Team:</strong><span>${card.team} ${clubIconHtml}</span></div>
                         <div class="card-detail"><strong>Type:</strong><span>${card.cardType}</span></div>
                         <div class="card-detail"><strong>Company:</strong><span>${card.company}</span></div>
                         ${tagsHtml}
@@ -2339,11 +2340,11 @@
                 const uploaded = cards.filter(c => String(c.uploadedBy) === uid);
                 uploaded.forEach(c => { if (!myCards.find(x => String(x.id) === String(c.id))) myCards.push({...c, _tag:'uploaded'}); });
             }
-            if (filter === 'all' || filter === 'loved') {
+            if (filter === 'all' || filter === 'liked') {
                 cards.filter(c => {
                     const ix = cardInteractions[String(c.id)] || cardInteractions[c.id] || {};
                     return ix.likes && ix.likes.map(String).includes(uid);
-                }).forEach(c => { if (!myCards.find(x => String(x.id) === String(c.id))) myCards.push({...c, _tag:'loved'}); });
+                }).forEach(c => { if (!myCards.find(x => String(x.id) === String(c.id))) myCards.push({...c, _tag:'liked'}); });
             }
             if (filter === 'all' || filter === 'owned') {
                 cards.filter(c => {
@@ -2375,6 +2376,13 @@
         function renderCardWithTags(card) {
             const ix  = cardInteractions[String(card.id)] || cardInteractions[card.id] || { likes:[], owns:[], wants:[] };
             const uid = String(currentUser.id);
+            
+            // Look up club icon dynamically
+            const club = approvedClubs.find(c => c.name === card.team);
+            const clubIconHtml = club && club.icon 
+                ? `<img src="${club.icon}" style="width:18px;height:18px;border-radius:3px;object-fit:cover;vertical-align:middle;">` 
+                : '';
+            
             const actionTags = [];
             if (String(card.uploadedBy) === uid) actionTags.push('<span class="tag" style="background:#ffd93d;color:#333;">⬆️ Uploaded</span>');
             if (ix.likes  && ix.likes.map(String).includes(uid))  actionTags.push('<span class="tag" style="background:#ff4d4d;color:white;">❤️ Loved</span>');
@@ -2395,7 +2403,7 @@
                     </div>
                     <div class="card-info">
                         <h3>${card.playerName}</h3>
-                        <div class="card-detail"><strong>Team:</strong><span>${card.team} ${card.clubIcon ? `<img src="${card.clubIcon}" style="width:18px;height:18px;border-radius:3px;object-fit:cover;vertical-align:middle;">` : ''}</span></div>
+                        <div class="card-detail"><strong>Team:</strong><span>${card.team} ${clubIconHtml}</span></div>
                         <div class="card-detail"><strong>Type:</strong><span>${card.cardType}</span></div>
                         <div class="card-detail"><strong>Company:</strong><span>${card.company}</span></div>
                         ${actionTagsHtml}
@@ -2579,7 +2587,14 @@
 
             if (allCards.length === 0) { container.innerHTML = '<p style="color:#999;text-align:center;padding:20px;">No cards found</p>'; return; }
 
-            container.innerHTML = allCards.map(card => `
+            container.innerHTML = allCards.map(card => {
+                // Look up club icon dynamically for this card
+                const club = approvedClubs.find(c => c.name === card.team);
+                const clubIconHtml = club && club.icon 
+                    ? `<img src="${club.icon}" style="width:18px;height:18px;border-radius:3px;object-fit:cover;vertical-align:middle;">` 
+                    : '';
+                
+                return `
                 <div class="admin-card-row ${card._isPending ? 'pending-highlight' : ''}">
                     <div style="display:flex;gap:8px;flex-shrink:0;">
                         <div class="card-image" style="width:65px;height:90px;font-size:0.6em;" onclick="openModal('${card.frontImage || ''}')">
@@ -2594,7 +2609,7 @@
                             ${card.playerName}
                             ${card._isPending ? '<span style="background:#FF9800;color:white;padding:2px 8px;border-radius:10px;font-size:0.75em;margin-left:6px;">⏳ Pending</span>' : ''}
                         </div>
-                        <div style="color:#999;font-size:0.85em;margin-top:3px;">${card.team} ${card.clubIcon ? `<img src="${card.clubIcon}" style="width:18px;height:18px;border-radius:3px;object-fit:cover;vertical-align:middle;">` : ''} · ${card.cardType} · ${card.company}</div>
+                        <div style="color:#999;font-size:0.85em;margin-top:3px;">${card.team} ${clubIconHtml} · ${card.cardType} · ${card.company}</div>
                         <div style="color:#bbb;font-size:0.8em;">⬆️ ${card.uploaderNickname || 'unknown'} · #${card.id}</div>
                         ${card.tags && card.tags.length > 0 ? `<div class="tags" style="margin-top:4px;">${card.tags.map(t => `<span class="tag">${t}</span>`).join('')}</div>` : ''}
                     </div>
@@ -2604,7 +2619,8 @@
                         <button class="btn-edit" onclick="event.stopPropagation(); openEditCardModal(${card.id}, ${card._isPending || false})">✏️ Edit</button>
                         ${!card._isPending ? `<button class="btn-reject" onclick="event.stopPropagation(); deleteCard(${card.id})">🗑️ Delete</button>` : ''}
                     </div>
-                </div>`).join('');
+                </div>`;
+            }).join('');
         }
 
         async function approveCard(cardId) {
@@ -2613,8 +2629,8 @@
 
             card.approved = true;
 
-            // Add club/type if new
-            if (!approvedClubs.find(c => c.name === card.team)) approvedClubs.push({name: card.team, icon: card.clubIcon || null});
+            // Add club/type if new (clubs without logos by default)
+            if (!approvedClubs.find(c => c.name === card.team)) approvedClubs.push({name: card.team, icon: null});
             if (!approvedTypes.includes(card.cardType)) approvedTypes.push(card.cardType);
 
             const ix = {
@@ -3055,6 +3071,8 @@
             
             if (!display) return;
             const club = approvedClubs.find(c => c.name === sel.value);
+            console.log('Selected club:', club);
+            console.log('Club icon:', club?.icon);
             if (club && club.icon) {
                 display.innerHTML = `<img src="${club.icon}" style="width:30px; height:30px; border-radius:6px; object-fit:cover;">`;
                 display.dataset.icon = club.icon;
@@ -3368,6 +3386,19 @@
         z-index: 9999;
         display: block;
     ">🔄 Loading...</div>
+
+    <!-- Version Number -->
+    <div style="
+        position: fixed;
+        bottom: 15px;
+        left: 15px;
+        background: rgba(0,0,0,0.5);
+        color: white;
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 0.75em;
+        z-index: 9999;
+    ">v1.0.6</div>
 
 </body>
 </html>
