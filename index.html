@@ -2117,7 +2117,12 @@
         function areMutualFriends(userId1, userId2) {
             const user1Following = follows[String(userId1)]?.following || [];
             const user2Following = follows[String(userId2)]?.following || [];
-            return user1Following.includes(String(userId2)) && user2Following.includes(String(userId1));
+            console.log('  👥 Checking mutual friends:');
+            console.log('    User1 (' + userId1 + ') following:', user1Following);
+            console.log('    User2 (' + userId2 + ') following:', user2Following);
+            console.log('    Does user1 follow user2?', user1Following.map(String).includes(String(userId2)));
+            console.log('    Does user2 follow user1?', user2Following.map(String).includes(String(userId1)));
+            return user1Following.map(String).includes(String(userId2)) && user2Following.map(String).includes(String(userId1));
         }
         
         function canTradeCard(card) {
@@ -2600,6 +2605,17 @@
         // UPLOAD CARD
         // ============================================================
 
+        function handleOwnWantToggle(type) {
+            const ownCheckbox = document.getElementById('uploadOwn');
+            const wantCheckbox = document.getElementById('uploadWant');
+            
+            if (type === 'own' && ownCheckbox.checked) {
+                wantCheckbox.checked = false;
+            } else if (type === 'want' && wantCheckbox.checked) {
+                ownCheckbox.checked = false;
+            }
+        }
+
         async function uploadCard(e) {
             e.preventDefault();
             const playerName = document.getElementById('uploadPlayerName').value.trim();
@@ -2664,7 +2680,12 @@
                 e.target.reset();
                 if (frontPreview) frontPreview.innerHTML = '';
                 if (backPreview) backPreview.innerHTML = '';
-                if (clubIconEl) { clubIconEl.innerHTML = ''; clubIconEl.dataset.icon = ''; }
+                
+                const clubIconDisplay = document.getElementById('clubIconDisplay');
+                if (clubIconDisplay) { 
+                    clubIconDisplay.innerHTML = ''; 
+                    clubIconDisplay.dataset.icon = ''; 
+                }
             } catch(err) {
                 console.error('Upload error:', err);
                 alert('Upload failed: ' + (err.message || 'Please try again'));
@@ -3967,7 +3988,7 @@
         border-radius: 12px;
         font-size: 0.75em;
         z-index: 9999;
-    ">v1.1.9</div>
+    ">v1.2.1-debug</div>
 
 </body>
 </html>
