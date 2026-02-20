@@ -2053,6 +2053,7 @@
             const password = document.getElementById('signupPassword').value;
             const errorEl  = document.getElementById('signupError');
 
+            if (nickname.includes(' ')) { errorEl.textContent = 'Nickname cannot contain spaces!'; errorEl.style.display='block'; return; }
             if (password.length < 4)  { errorEl.textContent = 'Password must be at least 4 characters!'; errorEl.style.display='block'; return; }
             if (users.find(u => u.nickname === nickname)) { errorEl.textContent = 'Nickname already taken!'; errorEl.style.display='block'; return; }
 
@@ -4229,7 +4230,7 @@
         border-radius: 12px;
         font-size: 0.75em;
         z-index: 9999;
-    ">v1.3.4</div>
+    ">v1.3.5</div>
 
 </body>
 </html>
