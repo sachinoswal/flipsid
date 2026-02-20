@@ -1241,10 +1241,6 @@
                         </button>
                     </div>
                 </div>
-                <div class="form-group">
-                    <label>Confirm Password</label>
-                    <input type="password" id="signupConfirmPassword" required>
-                </div>
                 <div id="signupError" class="error-message" style="display:none;"></div>
                 <button type="submit" class="btn">Sign Up</button>
             </form>
@@ -2054,10 +2050,8 @@
             const fullName = document.getElementById('signupFullName').value.trim();
             const nickname = document.getElementById('signupNickname').value.trim();
             const password = document.getElementById('signupPassword').value;
-            const confirm  = document.getElementById('signupConfirmPassword').value;
             const errorEl  = document.getElementById('signupError');
 
-            if (password !== confirm) { errorEl.textContent = 'Passwords do not match!'; errorEl.style.display='block'; return; }
             if (password.length < 4)  { errorEl.textContent = 'Password must be at least 4 characters!'; errorEl.style.display='block'; return; }
             if (users.find(u => u.nickname === nickname)) { errorEl.textContent = 'Nickname already taken!'; errorEl.style.display='block'; return; }
 
@@ -4234,7 +4228,7 @@
         border-radius: 12px;
         font-size: 0.75em;
         z-index: 9999;
-    ">v1.3.2</div>
+    ">v1.3.3</div>
 
 </body>
 </html>
