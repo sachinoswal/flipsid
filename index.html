@@ -1241,6 +1241,11 @@
                         </button>
                     </div>
                 </div>
+                <div class="form-group">
+                    <label>Confirm Password</label>
+                    <input type="password" id="signupConfirmPassword" required>
+                </div>
+                <div id="signupError" class="error-message" style="display:none;"></div>
                 <button type="submit" class="btn">Sign Up</button>
             </form>
             <div class="auth-switch">
@@ -1713,6 +1718,10 @@
         let currentUserProfileFilter = 'all';
         let trades = [];  // All active trades
         let notifications = [];  // User notifications
+        let chats = [];  // All chats
+        let messages = {};  // messages[chatId] = [messages]
+        let activeChatId = null;  // Currently open chat
+        let chatListeners = {};  // Firestore listeners
 
         // ── READ ─────────────────────────────────────────────────────
 
@@ -1751,11 +1760,6 @@
                 followRequests   = buildFollowRequests();
                 trades           = tradesSnap.docs.map(d => d.data());
                 notifications    = notificationsSnap.docs.map(d => d.data());
-
-                console.log('📊 Data loaded from Firebase:');
-                console.log('Cards loaded:', cards);
-                console.log('Cards with approved=true:', cards.filter(c => c.approved === true));
-                console.log('Cards with approved!==false:', cards.filter(c => c.approved !== false));
 
                 // Cache to localStorage
                 cacheToLocal();
@@ -2893,10 +2897,8 @@
 
         function loadBrowseCards() {
             const container = document.getElementById('browseCardsList');
-            if (!container) {
-                console.log('⚠️ browseCardsList element not found');
-                return;
-            }
+            if (!container) return;
+            
             const approved = cards.filter(c => c.approved !== false);
             
             // Sort by most loved (highest likes count first)
@@ -2906,9 +2908,6 @@
                 return bLikes - aLikes; // descending order
             });
             
-            console.log('Total cards:', cards.length);
-            console.log('Approved cards:', approved.length);
-            console.log('Cards data:', cards);
             if (approved.length === 0) {
                 container.innerHTML = `<div class="empty-state"><div class="empty-state-icon">🎴</div><h3>No cards yet</h3><p>Be the first to upload a card!</p></div>`;
                 return;
@@ -4235,7 +4234,7 @@
         border-radius: 12px;
         font-size: 0.75em;
         z-index: 9999;
-    ">v1.3.1</div>
+    ">v1.3.2</div>
 
 </body>
 </html>
